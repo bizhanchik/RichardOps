@@ -765,14 +765,10 @@ async def get_recent_events(
 
 
 if __name__ == "__main__":
-    # Get production-ready configuration
-    uvicorn_config = perf_config.get_uvicorn_config()
-    
-    # Log performance configuration summary
-    logger.info("Starting monitoring backend with performance configuration:")
-    logger.info(f"Performance summary: {perf_config.get_performance_summary()}")
-    
     uvicorn.run(
         "main:app",
-        **uvicorn_config
+        host="0.0.0.0",
+        port=8000,
+        reload=False,      # для продакшена обычно False
+        log_level="info"
     )
