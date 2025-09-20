@@ -147,16 +147,37 @@ def verify_hmac_signature(signature: str, timestamp: str, body: bytes) -> None:
         current_time = time.time()
         time_diff = abs(current_time - ts_int)
         
+        # Enhanced logging for clock synchronization monitoring
+        from datetime import datetime, timezone
+        client_dt = datetime.fromtimestamp(ts_int, tz=timezone.utc)
+        server_dt = datetime.fromtimestamp(current_time, tz=timezone.utc)
+        
+        # Log all timestamp checks for monitoring (can be filtered in production)
+        logger.debug(f"Timestamp check: client={client_dt.isoformat()}, server={server_dt.isoformat()}, diff={time_diff:.2f}s, window={timestamp_window}s")
+        
         if time_diff > timestamp_window:
-            logger.warning(f"Request timestamp is stale: time_diff={time_diff}s, window={timestamp_window}s, client_time={ts_int}, server_time={current_time}")
+            # Enhanced error logging for troubleshooting
+            logger.error(f"TIMESTAMP_STALE: time_diff={time_diff:.2f}s > window={timestamp_window}s")
+            logger.error(f"  Client time: {client_dt.isoformat()} (Unix: {ts_int})")
+            logger.error(f"  Server time: {server_dt.isoformat()} (Unix: {current_time:.2f})")
+            logger.error(f"  Time behind: {(current_time - ts_int):.2f}s ({'client behind' if current_time > ts_int else 'server behind'})")
+            
+            # Check if this is the massive clock sync issue
+            if time_diff > 3600:  # More than 1 hour
+                logger.critical(f"MASSIVE_CLOCK_DRIFT: {time_diff/3600:.1f} hours difference - immediate clock sync required!")
+            
             raise HTTPException(
                 status_code=400, 
-                detail=f"Request timestamp is stale (diff: {time_diff}s, max: {timestamp_window}s)"
+                detail=f"Request timestamp is stale (diff: {time_diff:.2f}s, max: {timestamp_window}s)"
             )
         
-        # Log clock drift warnings for monitoring
-        if time_diff > 60:  # Warn if more than 1 minute difference
-            logger.warning(f"Clock drift detected: {time_diff}s difference between client and server")
+        # Enhanced clock drift warnings with severity levels
+        if time_diff > 300:  # 5+ minutes
+            logger.warning(f"SEVERE_CLOCK_DRIFT: {time_diff:.2f}s difference - clock sync recommended")
+        elif time_diff > 60:  # 1+ minute
+            logger.warning(f"MODERATE_CLOCK_DRIFT: {time_diff:.2f}s difference - monitor clock sync")
+        elif time_diff > 10:  # 10+ seconds
+            logger.info(f"MINOR_CLOCK_DRIFT: {time_diff:.2f}s difference - within acceptable range")
             
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid timestamp format")
