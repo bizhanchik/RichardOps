@@ -1,8 +1,8 @@
 import os
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import text
+from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
+from sqlalchemy import text, create_engine
 from typing import AsyncGenerator
 
 logger = logging.getLogger("monitoring-backend")
@@ -17,6 +17,12 @@ class Base(DeclarativeBase):
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", 
     "postgresql+asyncpg://monitoring_user:monitoring_pass@localhost:5432/monitoring"
+)
+
+# Sync database URL (for NLP system compatibility)
+SYNC_DATABASE_URL = os.environ.get(
+    "SYNC_DATABASE_URL",
+    "postgresql://monitoring_user:monitoring_pass@localhost:5432/monitoring"
 )
 
 # Create async engine
@@ -42,6 +48,26 @@ async_session_maker = async_sessionmaker(
     expire_on_commit=False,
 )
 
+# Create sync engine and session factory (for NLP system compatibility)
+sync_engine = create_engine(
+    SYNC_DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    pool_size=5,
+    max_overflow=10,
+    pool_timeout=30,
+    connect_args={
+        "application_name": "monitoring-backend-sync",
+    }
+)
+
+sync_session_maker = sessionmaker(
+    sync_engine,
+    class_=Session,
+    expire_on_commit=False,
+)
+
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """
@@ -63,6 +89,16 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+
+
+def get_sync_db_session() -> Session:
+    """
+    Create a synchronous database session for the NLP system.
+    
+    Returns:
+        Session: Synchronous database session that should be closed manually
+    """
+    return sync_session_maker()
 
 
 async def init_db():
@@ -110,7 +146,8 @@ async def _create_required_extensions(conn):
 
 async def close_db():
     """
-    Close database engine.
+    Close database engines.
     This should be called on application shutdown.
     """
     await engine.dispose()
+    sync_engine.dispose()

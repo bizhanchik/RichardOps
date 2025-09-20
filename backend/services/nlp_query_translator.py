@@ -5,7 +5,7 @@ This module translates structured NLP queries into SQL queries, OpenSearch queri
 and other data source queries for security monitoring and log analysis.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Union
 from sqlalchemy import and_, or_, desc, func, text
 from sqlalchemy.orm import Session
@@ -15,6 +15,7 @@ from db_models import (
     MetricsModel, EmailNotificationsModel
 )
 from services.nlp_query_parser import ParsedQuery, QueryIntent, EntityType
+from services.log_search import LogSearchService
 
 
 class QueryTranslator:
@@ -35,6 +36,7 @@ class QueryTranslator:
             "metrics": MetricsModel,
             "notifications": EmailNotificationsModel
         }
+        self.log_search_service = LogSearchService()
     
     def translate_query(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
         """
@@ -64,81 +66,90 @@ class QueryTranslator:
             }
     
     def _handle_search_logs(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
-        """Handle log search queries."""
-        # Determine which table to query based on entities
-        table_model = self._determine_log_table(parsed_query)
-        
-        # Build base query
-        query = db_session.query(table_model)
-        
-        # Apply filters
-        query = self._apply_filters(query, parsed_query, table_model)
-        
-        # Apply time range
-        query = self._apply_time_filter(query, parsed_query, table_model)
-        
-        # Order by timestamp descending
-        query = query.order_by(desc(table_model.timestamp))
-        
-        # Limit results
-        query = query.limit(100)
-        
-        # Execute query
-        results = query.all()
-        
-        return {
-            "intent": "search_logs",
-            "results": [self._serialize_result(result) for result in results],
-            "count": len(results),
-            "table": table_model.__tablename__,
-            "query_info": {
-                "filters_applied": self._get_applied_filters(parsed_query),
-                "time_range": parsed_query.structured_params.get("time_range"),
-                "confidence": parsed_query.confidence
+        """Handle log search queries using OpenSearch."""
+        try:
+            # Extract search parameters from parsed query
+            search_params = self._extract_opensearch_params(parsed_query)
+            
+            # Use OpenSearch log search service
+            search_results = self.log_search_service.search_logs(
+                query=search_params.get("query"),
+                start_time=search_params.get("start_time"),
+                end_time=search_params.get("end_time"),
+                containers=search_params.get("containers"),
+                hosts=search_params.get("hosts"),
+                environments=search_params.get("environments"),
+                log_levels=search_params.get("log_levels"),
+                size=100
+            )
+            
+            return {
+                "intent": "search_logs",
+                "results": search_results.get("hits", []),
+                "count": search_results.get("total", 0),
+                "data_source": "opensearch",
+                "query_info": {
+                    "filters_applied": search_params,
+                    "time_range": parsed_query.structured_params.get("time_range"),
+                    "confidence": parsed_query.confidence,
+                    "opensearch_query": search_results.get("query_info", {})
+                }
             }
-        }
+            
+        except Exception as e:
+            return {
+                "intent": "search_logs",
+                "error": f"OpenSearch query failed: {str(e)}",
+                "results": [],
+                "count": 0,
+                "fallback_attempted": True
+            }
     
     def _handle_show_alerts(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
-        """Handle alert display queries."""
-        query = db_session.query(AlertsModel)
-        
-        # Apply filters
-        filters = parsed_query.structured_params.get("filters", {})
-        
-        if "severity" in filters:
-            query = query.filter(AlertsModel.severity == filters["severity"])
-        
-        if "status" in filters:
-            if filters["status"] in ["resolved", "closed"]:
-                query = query.filter(AlertsModel.resolved == True)
-            elif filters["status"] in ["unresolved", "open", "active"]:
-                query = query.filter(AlertsModel.resolved == False)
-        
-        # Apply time range
-        query = self._apply_time_filter(query, parsed_query, AlertsModel)
-        
-        # Order by timestamp descending
-        query = query.order_by(desc(AlertsModel.timestamp))
-        
-        # Limit results
-        query = query.limit(50)
-        
-        results = query.all()
-        
-        # Get summary statistics
-        stats = self._get_alert_statistics(db_session, parsed_query)
-        
-        return {
-            "intent": "show_alerts",
-            "results": [self._serialize_result(result) for result in results],
-            "count": len(results),
-            "statistics": stats,
-            "query_info": {
-                "filters_applied": self._get_applied_filters(parsed_query),
-                "time_range": parsed_query.structured_params.get("time_range"),
-                "confidence": parsed_query.confidence
+        """Handle alert queries using OpenSearch."""
+        try:
+            # Extract search parameters from parsed query
+            search_params = self._extract_opensearch_params(parsed_query)
+            
+            # Extract severity filter
+            severity_entities = [e for e in parsed_query.entities if e.entity_type == EntityType.SEVERITY]
+            if severity_entities:
+                severities = [e.value.upper() for e in severity_entities]
+                search_params["severities"] = severities
+            
+            # Use OpenSearch log search service for alerts
+            search_results = self.log_search_service.search_alerts(
+                query=search_params.get("query"),
+                start_time=search_params.get("start_time"),
+                end_time=search_params.get("end_time"),
+                severities=search_params.get("severities"),
+                containers=search_params.get("containers"),
+                hosts=search_params.get("hosts"),
+                environments=search_params.get("environments"),
+                size=50
+            )
+            
+            return {
+                "intent": "show_alerts",
+                "results": search_results.get("hits", []),
+                "count": search_results.get("total", 0),
+                "data_source": "opensearch",
+                "query_info": {
+                    "filters_applied": search_params,
+                    "time_range": parsed_query.structured_params.get("time_range"),
+                    "confidence": parsed_query.confidence,
+                    "opensearch_query": search_results.get("query_info", {})
+                }
             }
-        }
+            
+        except Exception as e:
+            return {
+                "intent": "show_alerts",
+                "error": f"OpenSearch alert query failed: {str(e)}",
+                "results": [],
+                "count": 0,
+                "fallback_attempted": True
+            }
     
     def _handle_generate_report(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
         """Handle report generation queries."""
@@ -734,14 +745,63 @@ class QueryTranslator:
             "trend": "stable"
         }
     
+    def _extract_opensearch_params(self, parsed_query: ParsedQuery) -> Dict[str, Any]:
+        """Extract OpenSearch search parameters from parsed query."""
+        params = {}
+        
+        # Extract search query text
+        if hasattr(parsed_query, 'search_terms') and parsed_query.search_terms:
+            params["query"] = " ".join(parsed_query.search_terms)
+        elif parsed_query.original_query:
+            # Use original query as fallback for text search
+            params["query"] = parsed_query.original_query
+        
+        # Extract time range
+        time_range = parsed_query.structured_params.get("time_range")
+        if time_range:
+            if isinstance(time_range, dict):
+                params["start_time"] = time_range.get("start")
+                params["end_time"] = time_range.get("end")
+        
+        # Extract entities for filtering
+        containers = []
+        hosts = []
+        log_levels = []
+        
+        for entity in parsed_query.entities:
+            if entity.entity_type == EntityType.CONTAINER:
+                containers.append(entity.value)
+            elif entity.entity_type == EntityType.HOST:
+                hosts.append(entity.value)
+            elif entity.entity_type == EntityType.LOG_LEVEL:
+                log_levels.append(entity.value.upper())
+        
+        if containers:
+            params["containers"] = containers
+        if hosts:
+            params["hosts"] = hosts
+        if log_levels:
+            params["log_levels"] = log_levels
+        
+        # Extract environment if specified
+        environments = []
+        for entity in parsed_query.entities:
+            if entity.entity_type == EntityType.ENVIRONMENT:
+                environments.append(entity.value)
+        if environments:
+            params["environments"] = environments
+        
+        return params
+
     def _get_query_suggestions(self) -> List[str]:
         """Get query suggestions for unsupported intents."""
         return [
-            "Try: 'Show me all failed logins in the last hour'",
-            "Try: 'Generate weekly security summary'",
-            "Try: 'What assets did IP address X.X.X.X target?'",
-            "Try: 'Show critical alerts from today'",
-            "Try: 'Analyze trends this month'"
+            "Show me all failed logins in the last hour",
+            "Generate weekly security summary", 
+            "What assets did IP address 192.168.1.100 target?",
+            "Show critical alerts from today",
+            "Find all ERROR logs from container webapp",
+            "Investigate suspicious activity in the last 24 hours"
         ]
 
 
