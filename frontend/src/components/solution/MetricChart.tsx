@@ -17,20 +17,80 @@ const createCPUChart = (
   chartHeight = 140,
   mousePosition: { x: number; y: number } | null = null,
   hoveredDataPoint: ProcessedCPUData | null = null,
-  onMouseMove: (position: { x: number; y: number } | null, dataPoint: ProcessedCPUData | null) => void = () => {}
+  onMouseMove: (position: { x: number; y: number } | null, dataPoint: ProcessedCPUData | null) => void = () => {},
+  animationState: {
+    isAnimating: boolean;
+    oldDomain: { start: Date; end: Date } | null;
+    newDomain: { start: Date; end: Date } | null;
+    progress: number;
+  } | null = null
 ) => {
   if (data.length === 0) return null;
   
-  const padding = 35; // Increased padding for better spacing
-  const maxUsage = Math.max(...data.map(d => d.usage));
-  const minUsage = Math.min(...data.map(d => d.usage));
+  const padding = 35;
+  
+  // Determine the time domain for rendering
+  const getTimeDomain = () => {
+    if (animationState?.isAnimating && animationState.oldDomain && animationState.newDomain) {
+      // Interpolate between old and new domains
+      const { oldDomain, newDomain, progress } = animationState;
+      
+      // Determine transition direction for adaptive easing
+      const oldDuration = oldDomain.end.getTime() - oldDomain.start.getTime();
+      const newDuration = newDomain.end.getTime() - newDomain.start.getTime();
+      const isContracting = newDuration < oldDuration;
+      
+      // Use different easing: aggressive for contracting, smooth for expanding
+      const eased = isContracting 
+        ? 1 - Math.pow(1 - progress, 1.5) // More aggressive for contracting (fast)
+        : 1 - Math.pow(1 - progress, 3); // Smooth cubic for expanding (elegant)
+      
+      const startTime = new Date(
+        oldDomain.start.getTime() + 
+        (newDomain.start.getTime() - oldDomain.start.getTime()) * eased
+      );
+      const endTime = new Date(
+        oldDomain.end.getTime() + 
+        (newDomain.end.getTime() - oldDomain.end.getTime()) * eased
+      );
+      
+      return { start: startTime, end: endTime };
+    }
+    
+    // Default domain: use data range
+    const timestamps = data.map(d => d.timestamp);
+    return {
+      start: new Date(Math.min(...timestamps.map(t => t.getTime()))),
+      end: new Date(Math.max(...timestamps.map(t => t.getTime())))
+    };
+  };
+
+  const timeDomain = getTimeDomain();
+  const timeRange = timeDomain.end.getTime() - timeDomain.start.getTime();
+  
+  // Filter and position data points based on current time domain
+  const getVisibleData = () => {
+    return data
+      .filter(d => d.timestamp >= timeDomain.start && d.timestamp <= timeDomain.end)
+      .map(d => {
+        const timeFraction = (d.timestamp.getTime() - timeDomain.start.getTime()) / timeRange;
+        const x = padding + timeFraction * (chartWidth - 2 * padding);
+        return { ...d, x };
+      });
+  };
+
+  const visibleData = getVisibleData();
+  
+  if (visibleData.length === 0) return null;
+  
+  const maxUsage = Math.max(...visibleData.map(d => d.usage));
+  const minUsage = Math.min(...visibleData.map(d => d.usage));
   const usageRange = maxUsage - minUsage || 1;
   
-  // Create path for the line
-  const pathData = data.map((d, i) => {
-    const x = padding + (i / (data.length - 1)) * (chartWidth - 2 * padding);
+  // Create path for the interpolated line
+  const pathData = visibleData.map((d, i) => {
     const y = chartHeight - padding - ((d.usage - minUsage) / usageRange) * (chartHeight - 2 * padding);
-    return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+    return `${i === 0 ? 'M' : 'L'} ${d.x} ${y}`;
   }).join(' ');
   
   // Create area path
@@ -40,13 +100,13 @@ const createCPUChart = (
 
   // Helper function to find closest data point to mouse X position
   const findClosestDataPoint = (mouseX: number) => {
-    if (!data || data.length === 0) return { data: null, index: -1 };
+    if (!visibleData || visibleData.length === 0) return { data: null, index: -1 };
     
-    const relativeX = mouseX - padding;
-    const normalizedX = relativeX / (chartWidth - 2 * padding);
-    const index = Math.round(normalizedX * (data.length - 1));
-    const clampedIndex = Math.max(0, Math.min(data.length - 1, index));
-    return { data: data[clampedIndex], index: clampedIndex };
+    const closest = visibleData.reduce((prev, curr) => {
+      return Math.abs(curr.x - mouseX) < Math.abs(prev.x - mouseX) ? curr : prev;
+    });
+    
+    return { data: closest, index: visibleData.indexOf(closest) };
   };
   
   return (
@@ -111,14 +171,7 @@ const createCPUChart = (
         
         <rect width="100%" height="100%" fill="url(#grid)" />
         
-        {/* Area fill */}
-        <path
-          d={areaPath}
-          fill={`url(#gradient-${color})`}
-          stroke="none"
-        />
-        
-        {/* Main line */}
+        {/* Main line with smooth morphing */}
         <path
           d={pathData}
           fill="none"
@@ -127,6 +180,20 @@ const createCPUChart = (
           filter="url(#glow)"
           strokeLinecap="round"
           strokeLinejoin="round"
+          style={{
+            transition: 'd 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+          }}
+          className="animate-draw-line"
+        />
+        
+        {/* Area fill with smooth morphing */}
+        <path
+          d={areaPath}
+          fill={`url(#gradient-${color})`}
+          stroke="none"
+          style={{
+            transition: 'd 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+          }}
         />
         
         {/* Crypto-style vertical line tracker */}
@@ -146,10 +213,15 @@ const createCPUChart = (
             
             {/* Highlight dot on the line */}
             {(() => {
-              const dataIndex = data.findIndex(d => d === hoveredDataPoint);
-              if (dataIndex === -1) return null;
+              // Find the hovered data point in the visible data
+              const visibleDataPoint = visibleData.find(d => 
+                d.timestamp.getTime() === hoveredDataPoint.timestamp.getTime() && 
+                d.usage === hoveredDataPoint.usage
+              );
               
-              const x = padding + (dataIndex / (data.length - 1)) * (chartWidth - 2 * padding);
+              if (!visibleDataPoint) return null;
+              
+              const x = visibleDataPoint.x;
               const y = chartHeight - padding - ((hoveredDataPoint.usage - minUsage) / usageRange) * (chartHeight - 2 * padding);
               
               return (
@@ -195,11 +267,21 @@ const createCPUChart = (
 const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRange }) => {
   const [cpuData, setCpuData] = useState<ProcessedCPUData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [updating, setUpdating] = useState(false); // Separate state for manual updates
+  const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null);
   const [hoveredDataPoint, setHoveredDataPoint] = useState<ProcessedCPUData | null>(null);
+  
+  // Domain-based animation state
+  const [animationState, setAnimationState] = useState<{
+    isAnimating: boolean;
+    oldDomain: { start: Date; end: Date } | null;
+    newDomain: { start: Date; end: Date } | null;
+    progress: number;
+  } | null>(null);
+  
+  const [currentTimeRange, setCurrentTimeRange] = useState(timeRange);
 
   const getColorClasses = (color: string) => {
     const colorMap = {
@@ -249,6 +331,99 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
     return colorMap[color as keyof typeof colorMap] || colorMap.emerald;
   };
 
+  // Domain-based smooth transition system
+  const animateDomainTransition = async (newTimeRange: string) => {
+    if (cpuData.length === 0) return;
+    
+    // Prevent multiple animations from stacking
+    if (animationState?.isAnimating) {
+      console.log('Animation already in progress, skipping...');
+      return;
+    }
+
+    // Calculate current domain from existing data
+    const timestamps = cpuData.map(d => d.timestamp);
+    const oldStart = new Date(Math.min(...timestamps.map(t => t.getTime())));
+    const oldEnd = new Date(Math.max(...timestamps.map(t => t.getTime())));
+    const oldDuration = oldEnd.getTime() - oldStart.getTime();
+
+    // Determine focus time (hovered timestamp or "now")
+    const focusTime = hoveredDataPoint?.timestamp || oldEnd;
+    
+    // Calculate fraction where focus time sits in current domain
+    const fraction = (focusTime.getTime() - oldStart.getTime()) / oldDuration;
+    
+    // Calculate new duration based on time range
+    const newHours = newTimeRange === '1h' ? 1 : newTimeRange === '12h' ? 12 : 24;
+    const newDuration = newHours * 60 * 60 * 1000; // Convert to milliseconds
+    
+    // Calculate new domain keeping focus time anchored
+    const newStart = new Date(focusTime.getTime() - fraction * newDuration);
+    const newEnd = new Date(newStart.getTime() + newDuration);
+
+    // Set up animation state
+    setAnimationState({
+      isAnimating: true,
+      oldDomain: { start: oldStart, end: oldEnd },
+      newDomain: { start: newStart, end: newEnd },
+      progress: 0
+    });
+
+    // Load new data for the time range while animating
+    try {
+      const data = await cpuDataService.loadCPUData();
+      const filteredData = cpuDataService.getDataForRange(data, newHours);
+      const dataToUse = filteredData.length > 0 ? filteredData : data;
+      
+      // Downsample for performance
+      const maxPoints = 50;
+      const step = Math.max(1, Math.ceil(dataToUse.length / maxPoints));
+      const sampledData = dataToUse.filter((_, i) => i % step === 0);
+
+      // Adaptive animation duration based on transition direction
+      const oldDurationHours = oldDuration / (60 * 60 * 1000); // Convert to hours
+      const isExpanding = newHours > oldDurationHours; // Low to high (1h → 12h → 24h)
+      const isContracting = newHours < oldDurationHours; // High to low (24h → 12h → 1h)
+      
+      // Instant for contracting, balanced for expanding
+      const duration = isContracting ? 0 : isExpanding ? 500 : 400;
+      const startTime = Date.now();
+      
+      const animate = () => {
+        const elapsed = Date.now() - startTime;
+        const progress = duration === 0 ? 1 : Math.min(elapsed / duration, 1);
+        
+        setAnimationState(prev => prev ? {
+          ...prev,
+          progress
+        } : null);
+        
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          // Animation complete - update time range and data
+          setAnimationState(null);
+          setCurrentTimeRange(newTimeRange);
+          setCpuData(sampledData);
+        }
+      };
+      
+      requestAnimationFrame(animate);
+    } catch (err) {
+      console.error('Error loading data during transition:', err);
+      setAnimationState(null);
+      setCurrentTimeRange(newTimeRange);
+    }
+  };
+
+  // Watch for time range changes and trigger domain animation
+  useEffect(() => {
+    // Prevent multiple animations and ensure we have data
+    if (currentTimeRange !== timeRange && cpuData.length > 0 && !animationState?.isAnimating) {
+      animateDomainTransition(timeRange);
+    }
+  }, [timeRange]); // Remove cpuData.length dependency to prevent multiple triggers
+
   useEffect(() => {
     if (title !== 'CPU Usage') return;
 
@@ -261,7 +436,7 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
         const data = await cpuDataService.loadCPUData();
         console.log('Raw data loaded:', data.length, 'points');
         
-        // Get data based on time range
+        // Get data based on the actual time range
         const hours = timeRange === '1h' ? 1 : timeRange === '12h' ? 12 : 24;
         const filteredData = cpuDataService.getDataForRange(data, hours);
         console.log('Filtered data:', filteredData.length, 'points for', timeRange);
@@ -277,7 +452,9 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
         console.log('Sampled data:', sampledData.length, 'points');
         
         setCpuData(sampledData);
+        setCurrentTimeRange(timeRange);
         setLastUpdated(new Date());
+        
       } catch (err) {
         console.error('Error loading CPU data:', err);
         setError(err instanceof Error ? err.message : 'Failed to load CPU data');
@@ -366,8 +543,9 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
       {isCPUChart && cpuData.length > 0 ? (
         <div className="mb-4 relative">
           
+          
           {/* Crypto-style tooltip at the top right */}
-          {hoveredDataPoint && (
+          {hoveredDataPoint && !animationState?.isAnimating && (
             <div className="absolute top-2 right-4 bg-gray-900 text-white px-3 py-2 rounded-lg shadow-lg z-10 text-sm">
               <div className="font-semibold text-emerald-400">{hoveredDataPoint.usage}%</div>
               <div className="text-gray-300 text-xs">{hoveredDataPoint.formattedTime}</div>
@@ -375,16 +553,17 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
           )}
           
           {createCPUChart(
-            cpuData, 
+            cpuData,
             color, 
             400, 
             140, 
             mousePosition, 
             hoveredDataPoint,
-            (position, dataPoint) => {
+            (position: { x: number; y: number } | null, dataPoint: ProcessedCPUData | null) => {
               setMousePosition(position);
               setHoveredDataPoint(dataPoint);
-            }
+            },
+            animationState
           )}
         </div>
       ) : isCPUChart && loading ? (
@@ -459,6 +638,7 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
                 const sampledData = dataToUse.filter((_, i) => i % step === 0);
                 console.log('Manual refresh: Sampled data:', sampledData.length, 'points');
                 
+                // Set data directly - domain animations handle transitions
                 setCpuData(sampledData);
                 setLastUpdated(new Date());
               } catch (err) {

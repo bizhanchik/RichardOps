@@ -35,4 +35,31 @@
     backdrop-filter: blur(12px);
     border: 1px solid rgba(0, 0, 0, 0.1);
   }
+  
+  /* Chart animations for smooth transitions */
+  @keyframes fadeInScale {
+    0% {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  
+  @keyframes drawLine {
+    0% {
+      stroke-dasharray: 1000;
+      stroke-dashoffset: 1000;
+    }
+    100% {
+      stroke-dasharray: 1000;
+      stroke-dashoffset: 0;
+    }
+  }
+  
+  .animate-draw-line {
+    animation: drawLine 1.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  }
 }
