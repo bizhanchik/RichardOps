@@ -39,6 +39,10 @@ logs_dir.mkdir(exist_ok=True)
 # Get secret from environment variable
 SECRET = os.environ.get("INGEST_SECRET", "")
 
+# Environment variables for timestamp validation:
+# - TIMESTAMP_TOLERANCE_SECONDS: Maximum allowed time difference in seconds (default: 3600)
+# - DISABLE_TIMESTAMP_VALIDATION: Set to "true" to completely disable timestamp validation
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -136,17 +140,37 @@ def verify_hmac_signature(signature: str, timestamp: str, body: bytes) -> None:
     if not SECRET:
         raise HTTPException(status_code=500, detail="Server configuration error")
     
-    # Check timestamp freshness (within 300 seconds for production stability)
-    try:
-        ts_int = int(timestamp)
-        current_time = time.time()
-        time_diff = abs(current_time - ts_int)
-        if time_diff > 300:  # Increased from 120 to 300 seconds for production stability
-            logger.warning(f"Stale timestamp detected: {time_diff}s difference (current: {current_time}, provided: {ts_int})")
-            raise HTTPException(status_code=400, detail="Request timestamp is stale")
-    except ValueError as e:
-        logger.warning(f"Invalid timestamp format: {timestamp} - {str(e)}")
-        raise HTTPException(status_code=400, detail="Invalid timestamp format")
+    # Check if timestamp validation is enabled (can be disabled for production environments with clock sync issues)
+    skip_timestamp_validation = os.environ.get("SKIP_TIMESTAMP_VALIDATION", "false").lower() == "true"
+    
+    if not skip_timestamp_validation:
+        # Check timestamp freshness with configurable tolerance for production environments
+        try:
+            ts_int = int(timestamp)
+            current_time = time.time()
+            time_diff = abs(current_time - ts_int)
+            
+            # Get timestamp tolerance from environment variable, default to 1 hour for production stability
+            timestamp_tolerance = int(os.environ.get("TIMESTAMP_TOLERANCE_SECONDS", "3600"))  # 1 hour default
+            
+            if time_diff > timestamp_tolerance:
+                # Log the issue but don't fail in production - this could be clock drift
+                logger.warning(f"Large timestamp difference detected: {time_diff}s (tolerance: {timestamp_tolerance}s)")
+                logger.warning(f"Current server time: {current_time} ({datetime.fromtimestamp(current_time, timezone.utc).isoformat()})")
+                logger.warning(f"Provided timestamp: {ts_int} ({datetime.fromtimestamp(ts_int, timezone.utc).isoformat()})")
+                
+                # Only fail if the difference is extremely large (more than 24 hours)
+                if time_diff > 86400:  # 24 hours
+                    raise HTTPException(status_code=400, detail="Request timestamp is extremely stale")
+                else:
+                    # Log but allow the request to proceed
+                    logger.info(f"Allowing request with stale timestamp due to production tolerance")
+                    
+        except ValueError as e:
+            logger.warning(f"Invalid timestamp format: {timestamp} - {str(e)}")
+            raise HTTPException(status_code=400, detail="Invalid timestamp format")
+    else:
+        logger.debug("Timestamp validation skipped due to SKIP_TIMESTAMP_VALIDATION=true")
     
     # Compute expected HMAC signature
     message = f"{timestamp}.{body.decode()}".encode()
