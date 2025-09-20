@@ -1,6 +1,6 @@
 import { timeUtils } from './timeUtils';
 
-export interface CPUDataPoint {
+export interface MemoryDataPoint {
   timestamp: string;
   cpu_usage: number;
   memory_usage: number;
@@ -10,48 +10,48 @@ export interface CPUDataPoint {
   tcp_connections: number;
 }
 
-export interface ProcessedCPUData {
+export interface ProcessedMemoryData {
   timestamp: Date;
   usage: number;
   formattedTime: string;
 }
 
-export class CPUDataService {
-  private static instance: CPUDataService;
-  private cache: Map<string, ProcessedCPUData[]> = new Map();
+export class MemoryDataService {
+  private static instance: MemoryDataService;
+  private cache: Map<string, ProcessedMemoryData[]> = new Map();
   private lastFetch: Map<string, number> = new Map();
   private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
-  static getInstance(): CPUDataService {
-    if (!CPUDataService.instance) {
-      CPUDataService.instance = new CPUDataService();
+  static getInstance(): MemoryDataService {
+    if (!MemoryDataService.instance) {
+      MemoryDataService.instance = new MemoryDataService();
     }
-    return CPUDataService.instance;
+    return MemoryDataService.instance;
   }
 
-  async loadCPUData(timeRange: string = '1h'): Promise<ProcessedCPUData[]> {
+  async loadMemoryData(timeRange: string = '1h'): Promise<ProcessedMemoryData[]> {
     const now = Date.now();
-    const cacheKey = `cpu_${timeRange}`;
+    const cacheKey = `memory_${timeRange}`;
     
     // Return cached data if it's still fresh for this specific time range
     const cachedData = this.cache.get(cacheKey);
     const lastFetchTime = this.lastFetch.get(cacheKey) || 0;
     
     if (cachedData && (now - lastFetchTime) < this.CACHE_DURATION) {
-      console.log('Returning cached CPU data:', cachedData.length, 'points for', timeRange);
+      console.log('Returning cached memory data:', cachedData.length, 'points for', timeRange);
       return cachedData;
     }
 
     try {
-      console.log(`Fetching CPU data from metrics/range?time_range=${timeRange}`);
+      console.log(`Fetching Memory data from metrics/range?time_range=${timeRange}`);
       const response = await fetch(`http://159.89.104.120:8000/metrics/range?time_range=${timeRange}`);
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch CPU data: ${response.status} ${response.statusText}`);
+        throw new Error(`Failed to fetch Memory data: ${response.status} ${response.statusText}`);
       }
 
-      const data: CPUDataPoint[] = await response.json();
-      console.log('Raw CPU JSON data:', data);
+      const data: MemoryDataPoint[] = await response.json();
+      console.log('Raw Memory JSON data:', data);
       
       // Calibrate time sync with server data
       timeUtils.calibrateTimeSync(data);
@@ -61,10 +61,10 @@ export class CPUDataService {
       this.cache.set(cacheKey, processedData);
       this.lastFetch.set(cacheKey, now);
       
-      console.log('Processed CPU data:', processedData.length, 'points for', timeRange);
+      console.log('Processed memory data:', processedData.length, 'points for', timeRange);
       return processedData;
     } catch (error) {
-      console.error('Error loading CPU data:', error);
+      console.error('Error loading Memory data:', error);
       
       // Clear cache for this time range on error and rethrow to let component handle
       this.cache.delete(cacheKey);
@@ -73,16 +73,16 @@ export class CPUDataService {
     }
   }
 
-  private processRawData(rawData: CPUDataPoint[]): ProcessedCPUData[] {
+  private processRawData(rawData: MemoryDataPoint[]): ProcessedMemoryData[] {
     return rawData.map(point => ({
       timestamp: timeUtils.parseTimestamp(point.timestamp),
-      usage: Math.round(point.cpu_usage * 10) / 10, // Round to 1 decimal place
+      usage: Math.round(point.memory_usage * 10) / 10, // Round to 1 decimal place
       formattedTime: timeUtils.formatTimestamp(timeUtils.parseTimestamp(point.timestamp))
     }));
   }
 
   // Get data for different time ranges
-  getDataForRange(data: ProcessedCPUData[], hours: number): ProcessedCPUData[] {
+  getDataForRange(data: ProcessedMemoryData[], hours: number): ProcessedMemoryData[] {
     if (data.length === 0) return data;
     
     // Use server-synchronized time range
@@ -99,7 +99,7 @@ export class CPUDataService {
   }
 
   // Calculate statistics
-  calculateStats(data: ProcessedCPUData[]) {
+  calculateStats(data: ProcessedMemoryData[]) {
     if (data.length === 0) return null;
 
     const usageValues = data.map(d => d.usage);
@@ -122,4 +122,4 @@ export class CPUDataService {
   }
 }
 
-export const cpuDataService = CPUDataService.getInstance();
+export const memoryDataService = MemoryDataService.getInstance();

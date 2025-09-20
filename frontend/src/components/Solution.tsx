@@ -3,17 +3,20 @@ import { PanelRightClose, Trash2 } from 'lucide-react';
 import Sidebar from './solution/Sidebar';
 import Dashboard from './solution/Dashboard';
 import AskAI from './solution/AskAI';
+import Logs from './solution/Logs';
+import { timeUtils } from '../utils/timeUtils';
 
 const Solution: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [timeRange, setTimeRange] = useState('1h');
   const [headerVisible, setHeaderVisible] = useState(false);
   const [activeView, setActiveView] = useState('graphs');
+  const [timeSyncStatus, setTimeSyncStatus] = useState(timeUtils.getTimeSyncStatus());
 
   const timeRangeOptions = [
     { value: '1h', label: '1 Hour' },
-    { value: '12h', label: '12 Hours' },
-    { value: '24h', label: '24 Hours' }
+    { value: '6h', label: '6 Hours' },
+    { value: '12h', label: '12 Hours' }
   ];
 
   useEffect(() => {
@@ -24,6 +27,19 @@ const Solution: React.FC = () => {
 
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Update time sync status periodically
+  useEffect(() => {
+    const updateTimeSyncStatus = () => {
+      setTimeSyncStatus(timeUtils.getTimeSyncStatus());
+    };
+
+    // Update immediately and then every 30 seconds
+    updateTimeSyncStatus();
+    const interval = setInterval(updateTimeSyncStatus, 30000);
+
+    return () => clearInterval(interval);
   }, []);
 
   // Handle view changes and reset scroll
@@ -60,12 +76,22 @@ const Solution: React.FC = () => {
             : 'backdrop-blur-none bg-transparent'
         } p-4`}>
           <div className="flex items-center justify-between">
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="flex items-center justify-center w-10 h-10 text-gray-600 hover:text-gray-900 hover:bg-white rounded-lg border border-gray-200 transition-all duration-200"
-            >
-              <PanelRightClose className="w-5 h-5" />
-            </button>
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="flex items-center justify-center w-10 h-10 text-gray-600 hover:text-gray-900 hover:bg-white rounded-lg border border-gray-200 transition-all duration-200"
+              >
+                <PanelRightClose className="w-5 h-5" />
+              </button>
+              
+              {/* Time Sync Status - Only show critical errors */}
+              {activeView === 'graphs' && timeSyncStatus.status === 'error' && (
+                <div className="px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                  <span className="mr-1">⚠️</span>
+                  Clock drift: {Math.abs(timeSyncStatus.offsetHours)}h
+                </div>
+              )}
+            </div>
             
             {/* Time Range Selector - Only show for Graphs */}
             {activeView === 'graphs' && (
@@ -104,10 +130,12 @@ const Solution: React.FC = () => {
         </div>
         
         {/* Main Content Area */}
-        <div className={`px-6 pt-2 pb-6 ${activeView === 'ask-ai' ? 'overflow-hidden' : ''}`}>
+        <div className={`px-6 pt-2 pb-6 ${activeView === 'ask-ai' || activeView === 'logs' ? 'overflow-hidden' : ''}`}>
           <div className="transition-all duration-500 ease-in-out">
             {activeView === 'graphs' ? (
               <Dashboard timeRange={timeRange} />
+            ) : activeView === 'logs' ? (
+              <Logs />
             ) : (
               <AskAI sidebarOpen={sidebarOpen} />
             )}

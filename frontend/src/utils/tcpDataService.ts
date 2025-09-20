@@ -1,6 +1,6 @@
 import { timeUtils } from './timeUtils';
 
-export interface CPUDataPoint {
+export interface TCPDataPoint {
   timestamp: string;
   cpu_usage: number;
   memory_usage: number;
@@ -10,48 +10,48 @@ export interface CPUDataPoint {
   tcp_connections: number;
 }
 
-export interface ProcessedCPUData {
+export interface ProcessedTCPData {
   timestamp: Date;
-  usage: number;
+  usage: number; // connection count
   formattedTime: string;
 }
 
-export class CPUDataService {
-  private static instance: CPUDataService;
-  private cache: Map<string, ProcessedCPUData[]> = new Map();
+export class TCPDataService {
+  private static instance: TCPDataService;
+  private cache: Map<string, ProcessedTCPData[]> = new Map();
   private lastFetch: Map<string, number> = new Map();
   private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
-  static getInstance(): CPUDataService {
-    if (!CPUDataService.instance) {
-      CPUDataService.instance = new CPUDataService();
+  static getInstance(): TCPDataService {
+    if (!TCPDataService.instance) {
+      TCPDataService.instance = new TCPDataService();
     }
-    return CPUDataService.instance;
+    return TCPDataService.instance;
   }
 
-  async loadCPUData(timeRange: string = '1h'): Promise<ProcessedCPUData[]> {
+  async loadTCPData(timeRange: '1h' | '6h' | '12h' = '12h'): Promise<ProcessedTCPData[]> {
     const now = Date.now();
-    const cacheKey = `cpu_${timeRange}`;
+    const cacheKey = `tcp_${timeRange}`;
     
     // Return cached data if it's still fresh for this specific time range
     const cachedData = this.cache.get(cacheKey);
     const lastFetchTime = this.lastFetch.get(cacheKey) || 0;
     
     if (cachedData && (now - lastFetchTime) < this.CACHE_DURATION) {
-      console.log('Returning cached CPU data:', cachedData.length, 'points for', timeRange);
+      console.log('Returning cached TCP data:', cachedData.length, 'points for', timeRange);
       return cachedData;
     }
 
     try {
-      console.log(`Fetching CPU data from metrics/range?time_range=${timeRange}`);
+      console.log('Fetching TCP data from API');
       const response = await fetch(`http://159.89.104.120:8000/metrics/range?time_range=${timeRange}`);
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch CPU data: ${response.status} ${response.statusText}`);
+        throw new Error(`Failed to fetch TCP data: ${response.status} ${response.statusText}`);
       }
 
-      const data: CPUDataPoint[] = await response.json();
-      console.log('Raw CPU JSON data:', data);
+      const data: TCPDataPoint[] = await response.json();
+      console.log('Raw TCP API data:', data);
       
       // Calibrate time sync with server data
       timeUtils.calibrateTimeSync(data);
@@ -61,10 +61,10 @@ export class CPUDataService {
       this.cache.set(cacheKey, processedData);
       this.lastFetch.set(cacheKey, now);
       
-      console.log('Processed CPU data:', processedData.length, 'points for', timeRange);
+      console.log('Processed TCP data:', processedData.length, 'points for', timeRange);
       return processedData;
     } catch (error) {
-      console.error('Error loading CPU data:', error);
+      console.error('Error loading TCP data:', error);
       
       // Clear cache for this time range on error and rethrow to let component handle
       this.cache.delete(cacheKey);
@@ -73,16 +73,19 @@ export class CPUDataService {
     }
   }
 
-  private processRawData(rawData: CPUDataPoint[]): ProcessedCPUData[] {
-    return rawData.map(point => ({
-      timestamp: timeUtils.parseTimestamp(point.timestamp),
-      usage: Math.round(point.cpu_usage * 10) / 10, // Round to 1 decimal place
-      formattedTime: timeUtils.formatTimestamp(timeUtils.parseTimestamp(point.timestamp))
-    }));
+  private processRawData(rawData: TCPDataPoint[]): ProcessedTCPData[] {
+    return rawData.map(point => {
+      const timestamp = timeUtils.parseTimestamp(point.timestamp);
+      return {
+        timestamp,
+        usage: Math.round(point.tcp_connections), // TCP connections are whole numbers
+        formattedTime: timeUtils.formatTimestamp(timestamp)
+      };
+    });
   }
 
   // Get data for different time ranges
-  getDataForRange(data: ProcessedCPUData[], hours: number): ProcessedCPUData[] {
+  getDataForRange(data: ProcessedTCPData[], hours: number): ProcessedTCPData[] {
     if (data.length === 0) return data;
     
     // Use server-synchronized time range
@@ -99,7 +102,7 @@ export class CPUDataService {
   }
 
   // Calculate statistics
-  calculateStats(data: ProcessedCPUData[]) {
+  calculateStats(data: ProcessedTCPData[]) {
     if (data.length === 0) return null;
 
     const usageValues = data.map(d => d.usage);
@@ -108,9 +111,9 @@ export class CPUDataService {
     const avg = usageValues.reduce((sum, val) => sum + val, 0) / usageValues.length;
     
     return {
-      min: Math.round(min * 10) / 10,
-      max: Math.round(max * 10) / 10,
-      avg: Math.round(avg * 10) / 10,
+      min: Math.round(min),
+      max: Math.round(max),
+      avg: Math.round(avg),
       current: usageValues[usageValues.length - 1] || 0
     };
   }
@@ -122,4 +125,4 @@ export class CPUDataService {
   }
 }
 
-export const cpuDataService = CPUDataService.getInstance();
+export const tcpDataService = TCPDataService.getInstance();

@@ -1,7 +1,76 @@
 import React, { useEffect, useState } from 'react';
 import { cpuDataService } from '../../utils/cpuDataService';
 import type { ProcessedCPUData } from '../../utils/cpuDataService';
+import { memoryDataService } from '../../utils/memoryDataService';
+import type { ProcessedMemoryData } from '../../utils/memoryDataService';
+import { diskDataService } from '../../utils/diskDataService';
+import type { ProcessedDiskData } from '../../utils/diskDataService';
+import { networkDataService } from '../../utils/networkDataService';
+import type { ProcessedNetworkData } from '../../utils/networkDataService';
+import { tcpDataService } from '../../utils/tcpDataService';
+import type { ProcessedTCPData } from '../../utils/tcpDataService';
 import LoadingAnimation, { ChartSkeleton } from '../LoadingAnimation';
+import { timeUtils } from '../../utils/timeUtils';
+
+// Union type for all metric data types
+type MetricDataPoint = ProcessedCPUData | ProcessedMemoryData | ProcessedDiskData | ProcessedNetworkData | ProcessedTCPData;
+
+// Helper function to format values based on metric type
+const getFormattedValue = (value: number, metricType: string): string => {
+  switch (metricType) {
+    case 'cpu':
+    case 'memory':
+    case 'disk':
+      // Show exact value with up to 2 decimal places, remove trailing zeros
+      return `${parseFloat(value.toFixed(2))}%`;
+    case 'network-rx':
+    case 'network-tx':
+      return formatBytes(value);
+    case 'tcp':
+      // Show exact value for TCP connections
+      return parseFloat(value.toFixed(1)).toString();
+    default:
+      return `${parseFloat(value.toFixed(2))}%`;
+  }
+};
+
+// Helper function to format bytes
+const formatBytes = (bytes: number): string => {
+  // Handle invalid values
+  if (isNaN(bytes) || bytes === undefined || bytes === null || bytes < 0) {
+    return '0 B';
+  }
+  
+  if (bytes === 0) return '0 B';
+  
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const value = bytes / Math.pow(k, i);
+  
+  return `${Math.round(value * 100) / 100} ${sizes[i]}`;
+};
+
+// Helper function to get metric type from title
+const getMetricType = (title: string): string => {
+  switch (title) {
+    case 'CPU Usage':
+      return 'cpu';
+    case 'Memory Usage':
+      return 'memory';
+    case 'Disk Usage':
+      return 'disk';
+    case 'Network RX':
+      return 'network-rx';
+    case 'Network TX':
+      return 'network-tx';
+    case 'TCP Connections':
+      return 'tcp';
+    default:
+      return 'cpu';
+  }
+};
 
 interface MetricChartProps {
   title: string;
@@ -10,22 +79,38 @@ interface MetricChartProps {
   timeRange: string;
 }
 
+// Helper function to get chart colors
+const getChartColors = (colorName: string) => {
+  const colorMap = {
+    emerald: { primary: '#10b981', secondary: '#34d399', tertiary: '#059669' },
+    blue: { primary: '#3b82f6', secondary: '#60a5fa', tertiary: '#2563eb' },
+    amber: { primary: '#f59e0b', secondary: '#fbbf24', tertiary: '#d97706' },
+    purple: { primary: '#8b5cf6', secondary: '#a78bfa', tertiary: '#7c3aed' },
+    rose: { primary: '#f43f5e', secondary: '#fb7185', tertiary: '#e11d48' },
+    cyan: { primary: '#06b6d4', secondary: '#22d3ee', tertiary: '#0891b2' }
+  };
+  return colorMap[colorName as keyof typeof colorMap] || colorMap.emerald;
+};
+
 const createCPUChart = (
-  data: ProcessedCPUData[], 
+  data: MetricDataPoint[], 
   color: string, 
   chartWidth = 400, 
   chartHeight = 140,
   mousePosition: { x: number; y: number } | null = null,
-  hoveredDataPoint: ProcessedCPUData | null = null,
-  onMouseMove: (position: { x: number; y: number } | null, dataPoint: ProcessedCPUData | null) => void = () => {},
+  hoveredDataPoint: MetricDataPoint | null = null,
+  onMouseMove: (position: { x: number; y: number } | null, dataPoint: MetricDataPoint | null) => void = () => {},
   animationState: {
     isAnimating: boolean;
     oldDomain: { start: Date; end: Date } | null;
     newDomain: { start: Date; end: Date } | null;
     progress: number;
-  } | null = null
+  } | null = null,
+  metricType: string = 'cpu'
 ) => {
   if (data.length === 0) return null;
+  
+  const chartColors = getChartColors(color);
   
   const padding = 35;
   
@@ -57,11 +142,19 @@ const createCPUChart = (
       return { start: startTime, end: endTime };
     }
     
-    // Default domain: use data range
+    // Default domain: extend to current time so lines reach the end
     const timestamps = data.map(d => d.timestamp);
+    const dataStart = new Date(Math.min(...timestamps.map(t => t.getTime())));
+    const dataEnd = new Date(Math.max(...timestamps.map(t => t.getTime())));
+    const now = new Date(); // Current UTC time
+    
+    // Extend end time to current time if data is recent
+    const timeSinceLastData = now.getTime() - dataEnd.getTime();
+    const fiveMinutes = 5 * 60 * 1000;
+    
     return {
-      start: new Date(Math.min(...timestamps.map(t => t.getTime()))),
-      end: new Date(Math.max(...timestamps.map(t => t.getTime())))
+      start: dataStart,
+      end: timeSinceLastData < fiveMinutes ? now : dataEnd
     };
   };
 
@@ -85,11 +178,33 @@ const createCPUChart = (
   
   const maxUsage = Math.max(...visibleData.map(d => d.usage));
   const minUsage = Math.min(...visibleData.map(d => d.usage));
-  const usageRange = maxUsage - minUsage || 1;
+  const isFlat = maxUsage === minUsage;
+  
+  // For flat lines, add artificial range to create a visible curve
+  let adjustedMinUsage = minUsage;
+  let adjustedMaxUsage = maxUsage;
+  let usageRange = maxUsage - minUsage;
+  
+  if (isFlat) {
+    // Add small artificial range around the constant value
+    const artificialRange = Math.max(maxUsage * 0.1, 5); // 10% of value or minimum 5
+    adjustedMinUsage = maxUsage - artificialRange / 2;
+    adjustedMaxUsage = maxUsage + artificialRange / 2;
+    usageRange = adjustedMaxUsage - adjustedMinUsage;
+  } else {
+    usageRange = maxUsage - minUsage || 1;
+  }
   
   // Create path for the interpolated line
   const pathData = visibleData.map((d, i) => {
-    const y = chartHeight - padding - ((d.usage - minUsage) / usageRange) * (chartHeight - 2 * padding);
+    let y;
+    if (isFlat) {
+      // For flat lines, place at the center of the artificial range
+      y = chartHeight - padding - ((d.usage - adjustedMinUsage) / usageRange) * (chartHeight - 2 * padding);
+    } else {
+      // Normal scaling for varying data
+      y = chartHeight - padding - ((d.usage - minUsage) / usageRange) * (chartHeight - 2 * padding);
+    }
     return `${i === 0 ? 'M' : 'L'} ${d.x} ${y}`;
   }).join(' ');
   
@@ -150,14 +265,14 @@ const createCPUChart = (
           </pattern>
           
           <linearGradient id={`gradient-${color}`} x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="rgb(16, 185, 129)" stopOpacity="0.3" />
-            <stop offset="100%" stopColor="rgb(16, 185, 129)" stopOpacity="0.05" />
+            <stop offset="0%" stopColor={chartColors.primary} stopOpacity="0.3" />
+            <stop offset="100%" stopColor={chartColors.primary} stopOpacity="0.05" />
           </linearGradient>
           
-          <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="rgb(34, 197, 94)" />
-            <stop offset="50%" stopColor="rgb(16, 185, 129)" />
-            <stop offset="100%" stopColor="rgb(5, 150, 105)" />
+          <linearGradient id={`lineGradient-${color}`} x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor={chartColors.secondary} />
+            <stop offset="50%" stopColor={chartColors.primary} />
+            <stop offset="100%" stopColor={chartColors.tertiary} />
           </linearGradient>
           
           <filter id="glow">
@@ -175,7 +290,7 @@ const createCPUChart = (
         <path
           d={pathData}
           fill="none"
-          stroke="url(#lineGradient)"
+          stroke={`url(#lineGradient-${color})`}
           strokeWidth="2.5"
           filter="url(#glow)"
           strokeLinecap="round"
@@ -205,7 +320,7 @@ const createCPUChart = (
               y1={padding}
               x2={mousePosition.x}
               y2={chartHeight - padding}
-              stroke="rgb(16, 185, 129)"
+              stroke={chartColors.primary}
               strokeWidth="1"
               strokeDasharray="4,2"
               opacity="0.8"
@@ -222,14 +337,21 @@ const createCPUChart = (
               if (!visibleDataPoint) return null;
               
               const x = visibleDataPoint.x;
-              const y = chartHeight - padding - ((hoveredDataPoint.usage - minUsage) / usageRange) * (chartHeight - 2 * padding);
+              let y;
+              if (isFlat) {
+                // For flat lines, use the artificial range positioning
+                y = chartHeight - padding - ((hoveredDataPoint.usage - adjustedMinUsage) / usageRange) * (chartHeight - 2 * padding);
+              } else {
+                // Normal scaling for varying data
+                y = chartHeight - padding - ((hoveredDataPoint.usage - minUsage) / usageRange) * (chartHeight - 2 * padding);
+              }
               
               return (
                 <circle
                   cx={x}
                   cy={y}
                   r="4"
-                  fill="rgb(16, 185, 129)"
+                  fill={chartColors.primary}
                   stroke="white"
                   strokeWidth="2"
                   filter="url(#glow)"
@@ -243,15 +365,24 @@ const createCPUChart = (
         
         {/* Y-axis labels with improved spacing */}
         <text x="8" y="20" fontSize="10" fill="#6b7280" textAnchor="start">
-          {Math.round(maxUsage)}%
+          {isFlat ? 
+            getFormattedValue(adjustedMaxUsage, metricType) : 
+            getFormattedValue(maxUsage, metricType)
+          }
         </text>
         <text x="8" y={chartHeight - 15} fontSize="10" fill="#6b7280" textAnchor="start">
-          {Math.round(minUsage)}%
+          {isFlat ? 
+            getFormattedValue(adjustedMinUsage, metricType) : 
+            getFormattedValue(minUsage, metricType)
+          }
         </text>
         
         {/* Middle Y-axis label for better reference */}
         <text x="8" y={chartHeight / 2 + 3} fontSize="10" fill="#6b7280" textAnchor="start">
-          {Math.round((maxUsage + minUsage) / 2)}%
+          {isFlat ? 
+            getFormattedValue(maxUsage, metricType) : 
+            getFormattedValue((maxUsage + minUsage) / 2, metricType)
+          }
         </text>
       </svg>
       
@@ -264,14 +395,98 @@ const createCPUChart = (
   );
 };
 
+// Helper function to load data based on metric type
+const loadMetricData = async (metricType: string, timeRange: '1h' | '6h' | '12h' = '12h'): Promise<MetricDataPoint[]> => {
+  switch (metricType) {
+    case 'cpu':
+      return await cpuDataService.loadCPUData(timeRange);
+    case 'memory':
+      return await memoryDataService.loadMemoryData(timeRange);
+    case 'disk':
+      return await diskDataService.loadDiskData(timeRange);
+    case 'network-rx':
+      return await networkDataService.loadNetworkData('rx', timeRange);
+    case 'network-tx':
+      return await networkDataService.loadNetworkData('tx', timeRange);
+    case 'tcp':
+      return await tcpDataService.loadTCPData(timeRange);
+    default:
+      return await cpuDataService.loadCPUData(timeRange);
+  }
+};
+
+// Helper function to get data for range based on metric type
+const getDataForRange = (data: MetricDataPoint[], hours: number, metricType: string): MetricDataPoint[] => {
+  switch (metricType) {
+    case 'cpu':
+      return cpuDataService.getDataForRange(data as ProcessedCPUData[], hours);
+    case 'memory':
+      return memoryDataService.getDataForRange(data as ProcessedMemoryData[], hours);
+    case 'disk':
+      return diskDataService.getDataForRange(data as ProcessedDiskData[], hours);
+    case 'network-rx':
+    case 'network-tx':
+      return networkDataService.getDataForRange(data as ProcessedNetworkData[], hours);
+    case 'tcp':
+      return tcpDataService.getDataForRange(data as ProcessedTCPData[], hours);
+    default:
+      return cpuDataService.getDataForRange(data as ProcessedCPUData[], hours);
+  }
+};
+
+// Helper function to calculate stats based on metric type
+const calculateStats = (data: MetricDataPoint[], metricType: string) => {
+  switch (metricType) {
+    case 'cpu':
+      return cpuDataService.calculateStats(data as ProcessedCPUData[]);
+    case 'memory':
+      return memoryDataService.calculateStats(data as ProcessedMemoryData[]);
+    case 'disk':
+      return diskDataService.calculateStats(data as ProcessedDiskData[]);
+    case 'network-rx':
+    case 'network-tx':
+      return networkDataService.calculateStats(data as ProcessedNetworkData[]);
+    case 'tcp':
+      return tcpDataService.calculateStats(data as ProcessedTCPData[]);
+    default:
+      return cpuDataService.calculateStats(data as ProcessedCPUData[]);
+  }
+};
+
+// Helper function to clear cache based on metric type
+const clearCache = (metricType: string): void => {
+  switch (metricType) {
+    case 'cpu':
+      cpuDataService.clearCache();
+      break;
+    case 'memory':
+      memoryDataService.clearCache();
+      break;
+    case 'disk':
+      diskDataService.clearCache();
+      break;
+    case 'network-rx':
+    case 'network-tx':
+      networkDataService.clearCache();
+      break;
+    case 'tcp':
+      tcpDataService.clearCache();
+      break;
+    default:
+      cpuDataService.clearCache();
+      break;
+  }
+};
+
 const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRange }) => {
-  const [cpuData, setCpuData] = useState<ProcessedCPUData[]>([]);
+  const metricType = getMetricType(title);
+  const [metricData, setMetricData] = useState<MetricDataPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null);
-  const [hoveredDataPoint, setHoveredDataPoint] = useState<ProcessedCPUData | null>(null);
+  const [hoveredDataPoint, setHoveredDataPoint] = useState<MetricDataPoint | null>(null);
   
   // Domain-based animation state
   const [animationState, setAnimationState] = useState<{
@@ -282,6 +497,7 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
   } | null>(null);
   
   const [currentTimeRange, setCurrentTimeRange] = useState(timeRange);
+  const [timeSyncStatus, setTimeSyncStatus] = useState(timeUtils.getTimeSyncStatus());
 
   const getColorClasses = (color: string) => {
     const colorMap = {
@@ -333,7 +549,7 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
 
   // Domain-based smooth transition system
   const animateDomainTransition = async (newTimeRange: string) => {
-    if (cpuData.length === 0) return;
+    if (metricData.length === 0) return;
     
     // Prevent multiple animations from stacking
     if (animationState?.isAnimating) {
@@ -341,8 +557,12 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
       return;
     }
 
+    // Set loading state during transition
+    setLoading(true);
+    setError(null);
+
     // Calculate current domain from existing data
-    const timestamps = cpuData.map(d => d.timestamp);
+    const timestamps = metricData.map(d => d.timestamp);
     const oldStart = new Date(Math.min(...timestamps.map(t => t.getTime())));
     const oldEnd = new Date(Math.max(...timestamps.map(t => t.getTime())));
     const oldDuration = oldEnd.getTime() - oldStart.getTime();
@@ -354,7 +574,7 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
     const fraction = (focusTime.getTime() - oldStart.getTime()) / oldDuration;
     
     // Calculate new duration based on time range
-    const newHours = newTimeRange === '1h' ? 1 : newTimeRange === '12h' ? 12 : 24;
+    const newHours = newTimeRange === '1h' ? 1 : newTimeRange === '6h' ? 6 : 12;
     const newDuration = newHours * 60 * 60 * 1000; // Convert to milliseconds
     
     // Calculate new domain keeping focus time anchored
@@ -371,8 +591,8 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
 
     // Load new data for the time range while animating
     try {
-      const data = await cpuDataService.loadCPUData();
-      const filteredData = cpuDataService.getDataForRange(data, newHours);
+      const data = await loadMetricData(metricType, newTimeRange as '1h' | '6h' | '12h');
+      const filteredData = getDataForRange(data, newHours, metricType);
       const dataToUse = filteredData.length > 0 ? filteredData : data;
       
       // Downsample for performance
@@ -382,8 +602,8 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
 
       // Adaptive animation duration based on transition direction
       const oldDurationHours = oldDuration / (60 * 60 * 1000); // Convert to hours
-      const isExpanding = newHours > oldDurationHours; // Low to high (1h → 12h → 24h)
-      const isContracting = newHours < oldDurationHours; // High to low (24h → 12h → 1h)
+      const isExpanding = newHours > oldDurationHours; // Low to high (1h → 6h → 12h)
+      const isContracting = newHours < oldDurationHours; // High to low (12h → 6h → 1h)
       
       // Instant for contracting, balanced for expanding
       const duration = isContracting ? 0 : isExpanding ? 500 : 400;
@@ -404,7 +624,8 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
           // Animation complete - update time range and data
           setAnimationState(null);
           setCurrentTimeRange(newTimeRange);
-          setCpuData(sampledData);
+          setMetricData(sampledData);
+          setLoading(false);
         }
       };
       
@@ -413,51 +634,64 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
       console.error('Error loading data during transition:', err);
       setAnimationState(null);
       setCurrentTimeRange(newTimeRange);
+      setLoading(false);
+      setError(err instanceof Error ? err.message : `Failed to load ${metricType} data`);
     }
   };
 
   // Watch for time range changes and trigger domain animation
   useEffect(() => {
     // Prevent multiple animations and ensure we have data
-    if (currentTimeRange !== timeRange && cpuData.length > 0 && !animationState?.isAnimating) {
+    if (currentTimeRange !== timeRange && metricData.length > 0 && !animationState?.isAnimating) {
       animateDomainTransition(timeRange);
     }
-  }, [timeRange]); // Remove cpuData.length dependency to prevent multiple triggers
+  }, [timeRange]); // Remove metricData.length dependency to prevent multiple triggers
 
   useEffect(() => {
-    if (title !== 'CPU Usage') return;
-
     const loadData = async () => {
       try {
         setLoading(true);
         setError(null);
         
-        console.log('Loading CPU data...');
-        const data = await cpuDataService.loadCPUData();
+        console.log(`Loading ${metricType} data...`);
+        const data = await loadMetricData(metricType, timeRange as '1h' | '6h' | '12h');
         console.log('Raw data loaded:', data.length, 'points');
         
         // Get data based on the actual time range
-        const hours = timeRange === '1h' ? 1 : timeRange === '12h' ? 12 : 24;
-        const filteredData = cpuDataService.getDataForRange(data, hours);
+        const hours = timeRange === '1h' ? 1 : timeRange === '6h' ? 6 : 12;
+        const filteredData = getDataForRange(data, hours, metricType);
         console.log('Filtered data:', filteredData.length, 'points for', timeRange);
         
         // If no data for the time range, use all available data
         const dataToUse = filteredData.length > 0 ? filteredData : data;
         console.log('Using data:', dataToUse.length, 'points');
         
-        // Downsample for better performance if needed
+        // Deterministic sampling to prevent dramatic visual changes
         const maxPoints = 50;
-        const step = Math.max(1, Math.ceil(dataToUse.length / maxPoints));
-        const sampledData = dataToUse.filter((_, i) => i % step === 0);
+        let sampledData = dataToUse;
+        if (dataToUse.length > maxPoints) {
+          // Use consistent interval-based sampling instead of modulo
+          const interval = (dataToUse.length - 1) / (maxPoints - 1);
+          sampledData = [];
+          for (let i = 0; i < maxPoints; i++) {
+            const index = Math.round(i * interval);
+            if (index < dataToUse.length) {
+              sampledData.push(dataToUse[index]);
+            }
+          }
+        }
         console.log('Sampled data:', sampledData.length, 'points');
         
-        setCpuData(sampledData);
+        setMetricData(sampledData);
         setCurrentTimeRange(timeRange);
         setLastUpdated(new Date());
         
+        // Update time sync status after data load
+        setTimeSyncStatus(timeUtils.getTimeSyncStatus());
+        
       } catch (err) {
-        console.error('Error loading CPU data:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load CPU data');
+        console.error(`Error loading ${metricType} data:`, err);
+        setError(err instanceof Error ? err.message : `Failed to load ${metricType} data`);
       } finally {
         setLoading(false);
       }
@@ -465,20 +699,21 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
 
     loadData();
 
-    // Refresh data every 5 minutes
-    const interval = setInterval(loadData, 5 * 60 * 1000);
+    // Refresh data every 10 seconds for real-time updates
+    const interval = setInterval(loadData, 10 * 1000);
     return () => clearInterval(interval);
-  }, [title, timeRange]);
+  }, [metricType, timeRange]);
 
   const colors = getColorClasses(color);
-  const isCPUChart = title === 'CPU Usage';
+  const chartColors = getChartColors(color);
+  const isActiveChart = metricData.length > 0;
 
-  // Calculate current metrics for CPU
-  const stats = cpuDataService.calculateStats(cpuData);
+  // Calculate current metrics for all chart types
+  const stats = calculateStats(metricData, metricType);
   const currentUsage = stats?.current || 0;
-  const displayValue = isCPUChart ? `${Math.round(currentUsage)}%` : value;
+  const displayValue = isActiveChart ? getFormattedValue(currentUsage, metricType) : value;
 
-  if (isCPUChart && loading) {
+  if (loading) {
     return (
       <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200">
         <div className="flex items-center justify-between mb-4">
@@ -492,7 +727,7 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
     );
   }
 
-  if (isCPUChart && error) {
+  if (error) {
     return (
       <div className="bg-white rounded-xl p-6 border border-red-200 shadow-sm">
         <div className="flex items-center justify-between mb-4">
@@ -509,6 +744,13 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
             </div>
           </div>
         </div>
+        <div className="flex items-center justify-center h-48 bg-red-50 rounded-lg border border-red-200">
+          <div className="text-center">
+            <div className="text-red-400 text-4xl mb-2">⚠️</div>
+            <p className="text-red-600 font-medium">API Connection Failed</p>
+            <p className="text-red-500 text-sm mt-1">Unable to load {title.toLowerCase()} data</p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -522,13 +764,13 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
           <div className="flex items-center space-x-2">
             <div className={`text-xl font-bold ${colors.text}`}>{displayValue}</div>
             <div className={`px-2 py-1 rounded text-xs font-medium ${colors.bg} ${colors.text}`}>
-              {timeRange === '1h' ? '1h' : timeRange === '12h' ? '12h' : '24h'}
+              {timeRange === '1h' ? '1h' : timeRange === '6h' ? '6h' : '12h'}
             </div>
           </div>
         </div>
         
-        {/* Status indicator based on CPU usage */}
-        {isCPUChart && (
+        {/* Status indicator based on usage */}
+        {metricType === 'cpu' && (
           <div className={`px-3 py-1 rounded-full text-xs font-medium ${
             currentUsage < 50 ? 'bg-green-100 text-green-800' :
             currentUsage < 80 ? 'bg-yellow-100 text-yellow-800' :
@@ -539,44 +781,56 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
         )}
       </div>
 
+      {/* Time Sync Warning - Only show critical errors */}
+      {timeSyncStatus.status === 'error' && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <div className="flex items-center space-x-2 text-red-700 text-sm">
+            <span>⚠️</span>
+            <span className="font-medium">Clock Sync Issue:</span>
+            <span>{timeSyncStatus.message}</span>
+          </div>
+        </div>
+      )}
+
       {/* Chart Area */}
-      {isCPUChart && cpuData.length > 0 ? (
+      {isActiveChart && metricData.length > 0 ? (
         <div className="mb-4 relative">
           
           
           {/* Crypto-style tooltip at the top right */}
           {hoveredDataPoint && !animationState?.isAnimating && (
             <div className="absolute top-2 right-4 bg-gray-900 text-white px-3 py-2 rounded-lg shadow-lg z-10 text-sm">
-              <div className="font-semibold text-emerald-400">{hoveredDataPoint.usage}%</div>
+              <div className="font-semibold" style={{ color: chartColors.primary }}>{getFormattedValue(hoveredDataPoint.usage, metricType)}</div>
               <div className="text-gray-300 text-xs">{hoveredDataPoint.formattedTime}</div>
             </div>
           )}
           
           {createCPUChart(
-            cpuData,
+            metricData,
             color, 
             400, 
             140, 
             mousePosition, 
             hoveredDataPoint,
-            (position: { x: number; y: number } | null, dataPoint: ProcessedCPUData | null) => {
+            (position: { x: number; y: number } | null, dataPoint: MetricDataPoint | null) => {
               setMousePosition(position);
               setHoveredDataPoint(dataPoint);
             },
-            animationState
+            animationState,
+            metricType
           )}
         </div>
-      ) : isCPUChart && loading ? (
+      ) : loading ? (
         <div className="mb-4">
-          <div className="text-sm text-gray-500 mb-2">Loading CPU data...</div>
+          <div className="text-sm text-gray-500 mb-2">Loading {title} data...</div>
           <LoadingAnimation />
         </div>
-      ) : isCPUChart && cpuData.length === 0 ? (
+      ) : metricData.length === 0 ? (
         <div className="mb-4">
-          <div className="text-sm text-red-500 mb-2">No CPU data available (length: {cpuData.length})</div>
+          <div className="text-sm text-red-500 mb-2">No {title} data available (length: {metricData.length})</div>
           <ChartSkeleton />
         </div>
-      ) : !isCPUChart ? (
+      ) : !isActiveChart ? (
         <div className={`h-48 rounded-lg border-2 border-dashed ${colors.border} ${colors.bg} flex items-center justify-center mb-4`}>
           <div className="text-center">
             <div className={`w-16 h-16 rounded-full ${colors.bg} border-2 ${colors.border} flex items-center justify-center mx-auto mb-3`}>
@@ -590,20 +844,26 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
         </div>
       ) : null}
 
-      {/* Statistics for CPU */}
-      {isCPUChart && stats && (
+      {/* Statistics for active charts */}
+      {isActiveChart && stats && (
         <div className="grid grid-cols-3 gap-4 text-sm mb-4">
           <div>
             <span className="text-gray-500">Min</span>
-            <div className="font-semibold text-gray-900">{stats.min}%</div>
+            <div className="font-semibold text-gray-900">
+              {getFormattedValue(Number(stats.min), metricType)}
+            </div>
           </div>
           <div>
             <span className="text-gray-500">Avg</span>
-            <div className="font-semibold text-gray-900">{stats.avg}%</div>
+            <div className="font-semibold text-gray-900">
+              {getFormattedValue(Number(stats.avg), metricType)}
+            </div>
           </div>
           <div>
             <span className="text-gray-500">Max</span>
-            <div className="font-semibold text-gray-900">{stats.max}%</div>
+            <div className="font-semibold text-gray-900">
+              {getFormattedValue(Number(stats.max), metricType)}
+            </div>
           </div>
         </div>
       )}
@@ -617,33 +877,44 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
           {/* Update button */}
           <button
             onClick={async () => {
-              cpuDataService.clearCache();
+              clearCache(metricType);
               setUpdating(true);
               try {
-                console.log('Manual refresh: Loading CPU data...');
-                const data = await cpuDataService.loadCPUData();
+                console.log(`Manual refresh: Loading ${metricType} data...`);
+                const data = await loadMetricData(metricType, timeRange as '1h' | '6h' | '12h');
                 console.log('Manual refresh: Raw data loaded:', data.length, 'points');
                 
                 // Update time range mapping
-                const hours = timeRange === '1h' ? 1 : timeRange === '12h' ? 12 : 24;
-                const filteredData = cpuDataService.getDataForRange(data, hours);
+                const hours = timeRange === '1h' ? 1 : timeRange === '6h' ? 6 : 12;
+                const filteredData = getDataForRange(data, hours, metricType);
                 console.log('Manual refresh: Filtered data:', filteredData.length, 'points for', timeRange);
                 
                 // If no data for the time range, use all available data
                 const dataToUse = filteredData.length > 0 ? filteredData : data;
                 console.log('Manual refresh: Using data:', dataToUse.length, 'points');
                 
+                // Deterministic sampling to prevent dramatic visual changes
                 const maxPoints = 50;
-                const step = Math.max(1, Math.ceil(dataToUse.length / maxPoints));
-                const sampledData = dataToUse.filter((_, i) => i % step === 0);
+                let sampledData = dataToUse;
+                if (dataToUse.length > maxPoints) {
+                  // Use consistent interval-based sampling instead of modulo
+                  const interval = (dataToUse.length - 1) / (maxPoints - 1);
+                  sampledData = [];
+                  for (let i = 0; i < maxPoints; i++) {
+                    const index = Math.round(i * interval);
+                    if (index < dataToUse.length) {
+                      sampledData.push(dataToUse[index]);
+                    }
+                  }
+                }
                 console.log('Manual refresh: Sampled data:', sampledData.length, 'points');
                 
                 // Set data directly - domain animations handle transitions
-                setCpuData(sampledData);
+                setMetricData(sampledData);
                 setLastUpdated(new Date());
               } catch (err) {
                 console.error('Manual refresh error:', err);
-                setError(err instanceof Error ? err.message : 'Failed to load CPU data');
+                setError(err instanceof Error ? err.message : `Failed to load ${metricType} data`);
               } finally {
                 setUpdating(false);
               }
