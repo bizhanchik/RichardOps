@@ -29,6 +29,8 @@ from db_models import (
     AlertsModel, EmailNotificationsModel
 )
 from routes import router as api_router
+from routes_nlp import router as nlp_basic_router
+from api.nlp_endpoints import nlp_router
 
 # Create logs directory if it doesn't exist
 logs_dir = Path("logs")
@@ -84,6 +86,10 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(api_router)
+
+# Include NLP routes
+app.include_router(nlp_basic_router)  # Basic NLP endpoints (/nlp/test, /nlp/process)
+app.include_router(nlp_router)        # Advanced NLP query system (/api/nlp/*)
 
 
 @app.exception_handler(Exception)
