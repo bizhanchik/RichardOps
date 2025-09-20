@@ -20,7 +20,7 @@ export class CPUDataService {
   private static instance: CPUDataService;
   private cache: Map<string, ProcessedCPUData[]> = new Map();
   private lastFetch: Map<string, number> = new Map();
-  private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+  private readonly CACHE_DURATION = 10 * 1000; // 10 seconds for real-time updates
 
   static getInstance(): CPUDataService {
     if (!CPUDataService.instance) {
@@ -29,46 +29,41 @@ export class CPUDataService {
     return CPUDataService.instance;
   }
 
-  async loadCPUData(timeRange: string = '1h'): Promise<ProcessedCPUData[]> {
+  async loadCPUData(timeRange: '1h' | '6h' | '12h' = '12h'): Promise<ProcessedCPUData[]> {
+    const cacheKey = `cpu-${timeRange}`;
     const now = Date.now();
-    const cacheKey = `cpu_${timeRange}`;
     
-    // Return cached data if it's still fresh for this specific time range
+    // Check if we have cached data that's still fresh
     const cachedData = this.cache.get(cacheKey);
     const lastFetchTime = this.lastFetch.get(cacheKey) || 0;
     
     if (cachedData && (now - lastFetchTime) < this.CACHE_DURATION) {
-      console.log('Returning cached CPU data:', cachedData.length, 'points for', timeRange);
+      console.log('Using cached CPU data for', timeRange);
       return cachedData;
     }
 
     try {
-      console.log(`Fetching CPU data from metrics/range?time_range=${timeRange}`);
-      const response = await fetch(`http://159.89.104.120:8000/metrics/range?time_range=${timeRange}`);
+      console.log('Fetching fresh CPU data from API');
+      const response = await fetch(`http://159.89.104.120:8000/metrics/range?period=${timeRange}`);
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch CPU data: ${response.status} ${response.statusText}`);
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
+      
+      const data = await response.json();
+      console.log('Raw CPU API response:', data);
 
-      const data: CPUDataPoint[] = await response.json();
-      console.log('Raw CPU JSON data:', data);
-      
-      // Calibrate time sync with server data
-      timeUtils.calibrateTimeSync(data);
-      
-      // Process and cache the data for this specific time range
+      // Process the data - API returns array directly, not wrapped in {data: [...]}
       const processedData = this.processRawData(data);
+
+      // Cache the processed data
       this.cache.set(cacheKey, processedData);
       this.lastFetch.set(cacheKey, now);
-      
+
       console.log('Processed CPU data:', processedData.length, 'points for', timeRange);
       return processedData;
     } catch (error) {
       console.error('Error loading CPU data:', error);
-      
-      // Clear cache for this time range on error and rethrow to let component handle
-      this.cache.delete(cacheKey);
-      this.lastFetch.delete(cacheKey);
       throw error;
     }
   }
@@ -77,7 +72,7 @@ export class CPUDataService {
     return rawData.map(point => ({
       timestamp: timeUtils.parseTimestamp(point.timestamp),
       usage: Math.round(point.cpu_usage * 10) / 10, // Round to 1 decimal place
-      formattedTime: timeUtils.formatTimestamp(timeUtils.parseTimestamp(point.timestamp))
+      formattedTime: timeUtils.formatChartTimestamp(timeUtils.parseTimestamp(point.timestamp))
     }));
   }
 
@@ -115,10 +110,9 @@ export class CPUDataService {
     };
   }
 
-  // Clear cache (useful for testing or forced refresh)
+  // Clear cache (no-op since caching is disabled)
   clearCache(): void {
-    this.cache.clear();
-    this.lastFetch.clear();
+    // No cache to clear - always fetching fresh data
   }
 }
 

@@ -20,7 +20,7 @@ export class DiskDataService {
   private static instance: DiskDataService;
   private cache: Map<string, ProcessedDiskData[]> = new Map();
   private lastFetch: Map<string, number> = new Map();
-  private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+  private readonly CACHE_DURATION = 10 * 1000; // 10 seconds for real-time updates
 
   static getInstance(): DiskDataService {
     if (!DiskDataService.instance) {
@@ -29,46 +29,25 @@ export class DiskDataService {
     return DiskDataService.instance;
   }
 
-  async loadDiskData(timeRange: string = '1h'): Promise<ProcessedDiskData[]> {
-    const now = Date.now();
-    const cacheKey = `disk_${timeRange}`;
-    
-    // Return cached data if it's still fresh for this specific time range
-    const cachedData = this.cache.get(cacheKey);
-    const lastFetchTime = this.lastFetch.get(cacheKey) || 0;
-    
-    if (cachedData && (now - lastFetchTime) < this.CACHE_DURATION) {
-      console.log('Returning cached disk data:', cachedData.length, 'points for', timeRange);
-      return cachedData;
-    }
-
+  async loadDiskData(timeRange: '1h' | '6h' | '12h' = '12h'): Promise<ProcessedDiskData[]> {
     try {
-      console.log(`Fetching Disk data from metrics/range?time_range=${timeRange}`);
-      const response = await fetch(`http://159.89.104.120:8000/metrics/range?time_range=${timeRange}`);
+      console.log('Fetching fresh disk data from API');
+      const response = await fetch(`http://159.89.104.120:8000/metrics/range?period=${timeRange}`);
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch Disk data: ${response.status} ${response.statusText}`);
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
+      
+      const data = await response.json();
+      console.log('Raw disk API response:', data);
 
-      const data: DiskDataPoint[] = await response.json();
-      console.log('Raw Disk JSON data:', data);
-      
-      // Calibrate time sync with server data
-      timeUtils.calibrateTimeSync(data);
-      
-      // Process and cache the data for this specific time range
+      // Process the data - API returns array directly, not wrapped in {data: [...]}
       const processedData = this.processRawData(data);
-      this.cache.set(cacheKey, processedData);
-      this.lastFetch.set(cacheKey, now);
-      
+
       console.log('Processed disk data:', processedData.length, 'points for', timeRange);
       return processedData;
     } catch (error) {
-      console.error('Error loading Disk data:', error);
-      
-      // Clear cache for this time range on error and rethrow to let component handle
-      this.cache.delete(cacheKey);
-      this.lastFetch.delete(cacheKey);
+      console.error('Error loading disk data:', error);
       throw error;
     }
   }
@@ -77,7 +56,7 @@ export class DiskDataService {
     return rawData.map(point => ({
       timestamp: timeUtils.parseTimestamp(point.timestamp),
       usage: Math.round(point.disk_usage * 10) / 10, // Round to 1 decimal place
-      formattedTime: timeUtils.formatTimestamp(timeUtils.parseTimestamp(point.timestamp))
+      formattedTime: timeUtils.formatChartTimestamp(timeUtils.parseTimestamp(point.timestamp))
     }));
   }
 
@@ -115,10 +94,9 @@ export class DiskDataService {
     };
   }
 
-  // Clear cache (useful for testing or forced refresh)
+  // Clear cache (no-op since caching is disabled)
   clearCache(): void {
-    this.cache.clear();
-    this.lastFetch.clear();
+    // No cache to clear - always fetching fresh data
   }
 }
 

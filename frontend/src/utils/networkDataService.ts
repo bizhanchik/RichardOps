@@ -22,7 +22,7 @@ export class NetworkDataService {
   private rxCache: Map<string, ProcessedNetworkData[]> = new Map();
   private txCache: Map<string, ProcessedNetworkData[]> = new Map();
   private lastFetch: Map<string, number> = new Map();
-  private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+  private readonly CACHE_DURATION = 10 * 1000; // 10 seconds for real-time updates
 
   static getInstance(): NetworkDataService {
     if (!NetworkDataService.instance) {
@@ -32,56 +32,24 @@ export class NetworkDataService {
   }
 
   async loadNetworkData(type: 'rx' | 'tx', timeRange: '1h' | '6h' | '12h' = '12h'): Promise<ProcessedNetworkData[]> {
-    const now = Date.now();
-    const cacheKey = `${type}_${timeRange}`;
-    const cache = type === 'rx' ? this.rxCache : this.txCache;
-    
-    // Return cached data if it's still fresh for this specific time range
-    const cachedData = cache.get(cacheKey);
-    const lastFetchTime = this.lastFetch.get(cacheKey) || 0;
-    
-    if (cachedData && (now - lastFetchTime) < this.CACHE_DURATION) {
-      console.log(`Returning cached ${type} network data:`, cachedData.length, 'points for', timeRange);
-      return cachedData;
-    }
-
     try {
-      console.log(`Fetching ${type.toUpperCase()} network data from API`);
-      const response = await fetch(`http://159.89.104.120:8000/metrics/range?time_range=${timeRange}`);
+      console.log(`Fetching fresh ${type} network data from API`);
+      const response = await fetch(`http://159.89.104.120:8000/metrics/range?period=${timeRange}`);
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch ${type.toUpperCase()} network data: ${response.status} ${response.statusText}`);
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
+      
+      const data = await response.json();
+      console.log(`Raw ${type} network API response:`, data);
 
-      const data: NetworkDataPoint[] = await response.json();
-      console.log(`Raw ${type.toUpperCase()} network API data:`, data);
-      
-      // Calibrate time sync with server data
-      timeUtils.calibrateTimeSync(data);
-      
-      // Process and cache the data for this specific time range
+      // Process the data - API returns array directly, not wrapped in {data: [...]}
       const processedData = this.processRawData(data, type);
-      
-      if (type === 'rx') {
-        this.rxCache.set(cacheKey, processedData);
-      } else {
-        this.txCache.set(cacheKey, processedData);
-      }
-      
-      this.lastFetch.set(cacheKey, now);
-      
+
       console.log(`Processed ${type} network data:`, processedData.length, 'points for', timeRange);
       return processedData;
     } catch (error) {
-      console.error(`Error loading ${type.toUpperCase()} network data:`, error);
-      
-      // Clear cache for this time range on error and rethrow to let component handle
-      if (type === 'rx') {
-        this.rxCache.delete(cacheKey);
-      } else {
-        this.txCache.delete(cacheKey);
-      }
-      this.lastFetch.delete(cacheKey);
+      console.error(`Error loading ${type} network data:`, error);
       throw error;
     }
   }
@@ -96,7 +64,7 @@ export class NetworkDataService {
       return {
         timestamp,
         usage: Math.round(usage),
-        formattedTime: timeUtils.formatTimestamp(timestamp),
+        formattedTime: timeUtils.formatChartTimestamp(timestamp),
         formattedUsage: this.formatBytes(usage)
       };
     });
@@ -154,11 +122,9 @@ export class NetworkDataService {
     };
   }
 
-  // Clear cache (useful for testing or forced refresh)
+  // Clear cache (no-op since caching is disabled)
   clearCache(): void {
-    this.rxCache.clear();
-    this.txCache.clear();
-    this.lastFetch.clear();
+    // No cache to clear - always fetching fresh data
   }
 }
 

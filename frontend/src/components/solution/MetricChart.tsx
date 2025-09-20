@@ -80,7 +80,8 @@ interface MetricChartProps {
 }
 
 // Helper function to get chart colors
-const getChartColors = (colorName: string) => {
+const getChartColors = (colorName: string) => {  // Fallback to emerald if color is undefined or invalid
+  const safeColorName = colorName || 'emerald';
   const colorMap = {
     emerald: { primary: '#10b981', secondary: '#34d399', tertiary: '#059669' },
     blue: { primary: '#3b82f6', secondary: '#60a5fa', tertiary: '#2563eb' },
@@ -89,7 +90,7 @@ const getChartColors = (colorName: string) => {
     rose: { primary: '#f43f5e', secondary: '#fb7185', tertiary: '#e11d48' },
     cyan: { primary: '#06b6d4', secondary: '#22d3ee', tertiary: '#0891b2' }
   };
-  return colorMap[colorName as keyof typeof colorMap] || colorMap.emerald;
+  return colorMap[safeColorName as keyof typeof colorMap] || colorMap.emerald;
 };
 
 const createCPUChart = (
@@ -111,6 +112,7 @@ const createCPUChart = (
   if (data.length === 0) return null;
   
   const chartColors = getChartColors(color);
+  console.log(`Chart colors for ${metricType}:`, { color, chartColors });
   
   const padding = 35;
   
@@ -174,6 +176,8 @@ const createCPUChart = (
 
   const visibleData = getVisibleData();
   
+
+  
   if (visibleData.length === 0) return null;
   
   const maxUsage = Math.max(...visibleData.map(d => d.usage));
@@ -195,8 +199,8 @@ const createCPUChart = (
     usageRange = maxUsage - minUsage || 1;
   }
   
-  // Create path for the interpolated line
-  const pathData = visibleData.map((d, i) => {
+  // Create simple line path
+  const linePath = visibleData.map((d, i) => {
     let y;
     if (isFlat) {
       // For flat lines, place at the center of the artificial range
@@ -205,13 +209,22 @@ const createCPUChart = (
       // Normal scaling for varying data
       y = chartHeight - padding - ((d.usage - minUsage) / usageRange) * (chartHeight - 2 * padding);
     }
+    
     return `${i === 0 ? 'M' : 'L'} ${d.x} ${y}`;
   }).join(' ');
   
-  // Create area path
-  const areaPath = pathData + 
-    ` L ${chartWidth - padding} ${chartHeight - padding}` + 
-    ` L ${padding} ${chartHeight - padding} Z`;
+  // Create simple area path
+  const areaPath = visibleData.map((d, i) => {
+    let y;
+    if (isFlat) {
+      y = chartHeight - padding - ((d.usage - adjustedMinUsage) / usageRange) * (chartHeight - 2 * padding);
+    } else {
+      y = chartHeight - padding - ((d.usage - minUsage) / usageRange) * (chartHeight - 2 * padding);
+    }
+    return `${i === 0 ? 'M' : 'L'} ${d.x} ${y}`;
+  }).join(' ') + 
+  ` L ${visibleData[visibleData.length - 1].x} ${chartHeight - padding}` + 
+  ` L ${visibleData[0].x} ${chartHeight - padding} Z`;
 
   // Helper function to find closest data point to mouse X position
   const findClosestDataPoint = (mouseX: number) => {
@@ -258,22 +271,11 @@ const createCPUChart = (
           }
         }}
       >
-        {/* Gradient definitions */}
+        {/* Definitions */}
         <defs>
           <pattern id="grid" width="40" height="28" patternUnits="userSpaceOnUse">
             <path d="M 40 0 L 0 0 0 28" fill="none" stroke="#f3f4f6" strokeWidth="1"/>
           </pattern>
-          
-          <linearGradient id={`gradient-${color}`} x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor={chartColors.primary} stopOpacity="0.3" />
-            <stop offset="100%" stopColor={chartColors.primary} stopOpacity="0.05" />
-          </linearGradient>
-          
-          <linearGradient id={`lineGradient-${color}`} x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor={chartColors.secondary} />
-            <stop offset="50%" stopColor={chartColors.primary} />
-            <stop offset="100%" stopColor={chartColors.tertiary} />
-          </linearGradient>
           
           <filter id="glow">
             <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
@@ -286,11 +288,11 @@ const createCPUChart = (
         
         <rect width="100%" height="100%" fill="url(#grid)" />
         
-        {/* Main line with smooth morphing */}
+        {/* Main line path with glow effect */}
         <path
-          d={pathData}
+          d={linePath}
           fill="none"
-          stroke={`url(#lineGradient-${color})`}
+          stroke={chartColors.primary || '#10b981'}
           strokeWidth="2.5"
           filter="url(#glow)"
           strokeLinecap="round"
@@ -298,13 +300,13 @@ const createCPUChart = (
           style={{
             transition: 'd 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
           }}
-          className="animate-draw-line"
         />
         
         {/* Area fill with smooth morphing */}
         <path
           d={areaPath}
-          fill={`url(#gradient-${color})`}
+          fill={chartColors.primary || '#10b981'}
+          fillOpacity="0.2"
           stroke="none"
           style={{
             transition: 'd 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -361,7 +363,7 @@ const createCPUChart = (
           </>
         )}
         
-        {/* No individual data points - clean crypto-style chart */}
+        {/* Clean crypto-style chart with no individual data points */}
         
         {/* Y-axis labels with improved spacing */}
         <text x="8" y="20" fontSize="10" fill="#6b7280" textAnchor="start">
@@ -386,10 +388,27 @@ const createCPUChart = (
         </text>
       </svg>
       
-      {/* Time labels with improved spacing and positioning */}
+      {/* Time labels with 10-second intervals */}
       <div className="absolute bottom-0 left-0 right-0 flex justify-between px-12 pb-1 text-xs text-gray-400">
-        <span className="bg-gray-50 px-1 rounded">{data[0]?.formattedTime}</span>
-        <span className="bg-gray-50 px-1 rounded">Now</span>
+        {visibleData.length > 0 && (() => {
+          // Show every 6th point (60 seconds) for readability, but keep 10-second data
+          const labelInterval = Math.max(1, Math.floor(visibleData.length / 8));
+          return visibleData
+            .filter((_, index) => index % labelInterval === 0 || index === visibleData.length - 1)
+            .map((point, index, filteredData) => (
+              <span 
+                key={index} 
+                className="bg-gray-50 px-1 rounded text-[10px]"
+                style={{ 
+                  position: 'absolute',
+                  left: `${(point.x / chartWidth) * 100}%`,
+                  transform: 'translateX(-50%)'
+                }}
+              >
+                {point.formattedTime}
+              </span>
+            ));
+        })()}
       </div>
     </div>
   );
@@ -500,6 +519,8 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
   const [timeSyncStatus, setTimeSyncStatus] = useState(timeUtils.getTimeSyncStatus());
 
   const getColorClasses = (color: string) => {
+    // Fallback to emerald if color is undefined or invalid
+    const safeColor = color || 'emerald';
     const colorMap = {
       emerald: {
         bg: 'bg-emerald-50',
@@ -544,7 +565,7 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
         chartColor: '#06b6d4'
       }
     };
-    return colorMap[color as keyof typeof colorMap] || colorMap.emerald;
+    return colorMap[safeColor as keyof typeof colorMap] || colorMap.emerald;
   };
 
   // Domain-based smooth transition system
@@ -595,10 +616,8 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
       const filteredData = getDataForRange(data, newHours, metricType);
       const dataToUse = filteredData.length > 0 ? filteredData : data;
       
-      // Downsample for performance
-      const maxPoints = 50;
-      const step = Math.max(1, Math.ceil(dataToUse.length / maxPoints));
-      const sampledData = dataToUse.filter((_, i) => i % step === 0);
+      // Use all data points for 10-second granularity
+      const sampledData = dataToUse;
 
       // Adaptive animation duration based on transition direction
       const oldDurationHours = oldDuration / (60 * 60 * 1000); // Convert to hours
@@ -640,9 +659,11 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
   };
 
   // Watch for time range changes and trigger domain animation
+  // Only animate when user manually changes time range, not during auto-reload
   useEffect(() => {
     // Prevent multiple animations and ensure we have data
-    if (currentTimeRange !== timeRange && metricData.length > 0 && !animationState?.isAnimating) {
+    // Only animate if this is a user-initiated time range change (not auto-reload)
+    if (currentTimeRange !== timeRange && metricData.length > 0 && !animationState?.isAnimating && !loading) {
       animateDomainTransition(timeRange);
     }
   }, [timeRange]); // Remove metricData.length dependency to prevent multiple triggers
@@ -666,24 +687,13 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
         const dataToUse = filteredData.length > 0 ? filteredData : data;
         console.log('Using data:', dataToUse.length, 'points');
         
-        // Deterministic sampling to prevent dramatic visual changes
-        const maxPoints = 50;
-        let sampledData = dataToUse;
-        if (dataToUse.length > maxPoints) {
-          // Use consistent interval-based sampling instead of modulo
-          const interval = (dataToUse.length - 1) / (maxPoints - 1);
-          sampledData = [];
-          for (let i = 0; i < maxPoints; i++) {
-            const index = Math.round(i * interval);
-            if (index < dataToUse.length) {
-              sampledData.push(dataToUse[index]);
-            }
-          }
-        }
+        // Use all data points for 10-second granularity
+        const sampledData = dataToUse;
         console.log('Sampled data:', sampledData.length, 'points');
         
         setMetricData(sampledData);
-        setCurrentTimeRange(timeRange);
+        // Don't update currentTimeRange during auto-reload to prevent animations
+        // setCurrentTimeRange(timeRange);
         setLastUpdated(new Date());
         
         // Update time sync status after data load
@@ -850,19 +860,25 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
           <div>
             <span className="text-gray-500">Min</span>
             <div className="font-semibold text-gray-900">
-              {getFormattedValue(Number(stats.min), metricType)}
+              {metricType === 'network-rx' || metricType === 'network-tx' 
+                ? stats.min 
+                : getFormattedValue(Number(stats.min), metricType)}
             </div>
           </div>
           <div>
             <span className="text-gray-500">Avg</span>
             <div className="font-semibold text-gray-900">
-              {getFormattedValue(Number(stats.avg), metricType)}
+              {metricType === 'network-rx' || metricType === 'network-tx' 
+                ? stats.avg 
+                : getFormattedValue(Number(stats.avg), metricType)}
             </div>
           </div>
           <div>
             <span className="text-gray-500">Max</span>
             <div className="font-semibold text-gray-900">
-              {getFormattedValue(Number(stats.max), metricType)}
+              {metricType === 'network-rx' || metricType === 'network-tx' 
+                ? stats.max 
+                : getFormattedValue(Number(stats.max), metricType)}
             </div>
           </div>
         </div>
@@ -893,20 +909,8 @@ const MetricChart: React.FC<MetricChartProps> = ({ title, value, color, timeRang
                 const dataToUse = filteredData.length > 0 ? filteredData : data;
                 console.log('Manual refresh: Using data:', dataToUse.length, 'points');
                 
-                // Deterministic sampling to prevent dramatic visual changes
-                const maxPoints = 50;
-                let sampledData = dataToUse;
-                if (dataToUse.length > maxPoints) {
-                  // Use consistent interval-based sampling instead of modulo
-                  const interval = (dataToUse.length - 1) / (maxPoints - 1);
-                  sampledData = [];
-                  for (let i = 0; i < maxPoints; i++) {
-                    const index = Math.round(i * interval);
-                    if (index < dataToUse.length) {
-                      sampledData.push(dataToUse[index]);
-                    }
-                  }
-                }
+                // Use all data points for 10-second granularity
+                const sampledData = dataToUse;
                 console.log('Manual refresh: Sampled data:', sampledData.length, 'points');
                 
                 // Set data directly - domain animations handle transitions

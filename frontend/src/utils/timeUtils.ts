@@ -76,11 +76,11 @@ class TimeManager {
   /**
    * Format timestamp relative to current time
    * @param date Date to format (UTC timestamp from server)
-   * @param referenceTime Optional reference time (defaults to current UTC)
+   * @param referenceTime Optional reference time (defaults to current local time)
    * @returns Formatted time string
    */
   formatRelativeTime(date: Date, referenceTime?: Date): string {
-    const reference = referenceTime || new Date(); // Current UTC time
+    const reference = referenceTime || new Date(); // Current local time
     const diffMs = reference.getTime() - date.getTime();
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
     const diffDays = Math.floor(diffHours / 24);
@@ -110,13 +110,13 @@ class TimeManager {
   }
 
   /**
-   * Get time range boundaries in UTC
+   * Get time range boundaries for filtering server data
    * @param hours Number of hours to go back
-   * @param endTime Optional end time (defaults to current UTC)
-   * @returns Start and end timestamps in UTC
+   * @param endTime Optional end time (defaults to current local time)
+   * @returns Start and end timestamps for filtering
    */
   getTimeRange(hours: number, endTime?: Date): { start: Date; end: Date } {
-    const end = endTime || new Date(); // Current UTC time
+    const end = endTime || new Date(); // Current local time
     const start = new Date(end.getTime() - (hours * 60 * 60 * 1000));
     
     return { start, end };
@@ -200,6 +200,18 @@ export const timeUtils = {
    */
   formatTimestamp: (date: Date): string => {
     return timeManager.formatRelativeTime(date);
+  },
+
+  /**
+   * Format timestamp for chart display in local time with seconds
+   */
+  formatChartTimestamp: (date: Date): string => {
+    return date.toLocaleTimeString('en-US', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false 
+    });
   },
 
   /**
