@@ -68,6 +68,6 @@ go.work.sum
 # .vscode/
 venv
 
-.json
+
 
 .log
