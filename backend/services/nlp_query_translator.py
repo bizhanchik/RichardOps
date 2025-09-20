@@ -45,6 +45,154 @@ class QueryTranslator:
             QueryIntent.ANALYZE_TRENDS: self._handle_analyze_trends
         }
     
+    def fetch_all_logs(self, db_session: Session, limit: int = 1000, offset: int = 0) -> Dict[str, Any]:
+        """
+        Simple function to fetch all logs without any filtering.
+        
+        Args:
+            db_session: Database session
+            limit: Maximum number of logs to return
+            offset: Number of logs to skip
+            
+        Returns:
+            Dictionary with logs data and metadata
+        """
+        try:
+            # Get total count
+            total_count = db_session.query(ContainerLogsModel).count()
+            
+            # Fetch logs with limit and offset
+            logs = db_session.query(ContainerLogsModel)\
+                .order_by(desc(ContainerLogsModel.timestamp))\
+                .limit(limit)\
+                .offset(offset)\
+                .all()
+            
+            return {
+                "success": True,
+                "data": {
+                    "logs": [self._serialize_result(log) for log in logs],
+                    "count": len(logs),
+                    "total_count": total_count,
+                    "limit": limit,
+                    "offset": offset,
+                    "has_more": offset + len(logs) < total_count
+                },
+                "metadata": {
+                    "query_type": "fetch_all_logs",
+                    "processing_time_ms": 0,
+                    "confidence": 1.0
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to fetch logs: {str(e)}",
+                "data": {"logs": [], "count": 0}
+            }
+    
+    def fetch_logs_by_level(self, db_session: Session, level: str, limit: int = 1000, offset: int = 0) -> Dict[str, Any]:
+        """
+        Simple function to fetch logs by log level.
+        
+        Args:
+            db_session: Database session
+            level: Log level (error, warn, info, debug)
+            limit: Maximum number of logs to return
+            offset: Number of logs to skip
+            
+        Returns:
+            Dictionary with logs data and metadata
+        """
+        try:
+            # Get total count for this level
+            total_count = db_session.query(ContainerLogsModel)\
+                .filter(ContainerLogsModel.level.ilike(f"%{level}%"))\
+                .count()
+            
+            # Fetch logs with level filter
+            logs = db_session.query(ContainerLogsModel)\
+                .filter(ContainerLogsModel.level.ilike(f"%{level}%"))\
+                .order_by(desc(ContainerLogsModel.timestamp))\
+                .limit(limit)\
+                .offset(offset)\
+                .all()
+            
+            return {
+                "success": True,
+                "data": {
+                    "logs": [self._serialize_result(log) for log in logs],
+                    "count": len(logs),
+                    "total_count": total_count,
+                    "limit": limit,
+                    "offset": offset,
+                    "level_filter": level,
+                    "has_more": offset + len(logs) < total_count
+                },
+                "metadata": {
+                    "query_type": "fetch_logs_by_level",
+                    "processing_time_ms": 0,
+                    "confidence": 1.0
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to fetch logs by level: {str(e)}",
+                "data": {"logs": [], "count": 0}
+            }
+    
+    def fetch_logs_by_container(self, db_session: Session, container: str, limit: int = 1000, offset: int = 0) -> Dict[str, Any]:
+        """
+        Simple function to fetch logs by container name.
+        
+        Args:
+            db_session: Database session
+            container: Container name or partial name
+            limit: Maximum number of logs to return
+            offset: Number of logs to skip
+            
+        Returns:
+            Dictionary with logs data and metadata
+        """
+        try:
+            # Get total count for this container
+            total_count = db_session.query(ContainerLogsModel)\
+                .filter(ContainerLogsModel.container_name.ilike(f"%{container}%"))\
+                .count()
+            
+            # Fetch logs with container filter
+            logs = db_session.query(ContainerLogsModel)\
+                .filter(ContainerLogsModel.container_name.ilike(f"%{container}%"))\
+                .order_by(desc(ContainerLogsModel.timestamp))\
+                .limit(limit)\
+                .offset(offset)\
+                .all()
+            
+            return {
+                "success": True,
+                "data": {
+                    "logs": [self._serialize_result(log) for log in logs],
+                    "count": len(logs),
+                    "total_count": total_count,
+                    "limit": limit,
+                    "offset": offset,
+                    "container_filter": container,
+                    "has_more": offset + len(logs) < total_count
+                },
+                "metadata": {
+                    "query_type": "fetch_logs_by_container",
+                    "processing_time_ms": 0,
+                    "confidence": 1.0
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to fetch logs by container: {str(e)}",
+                "data": {"logs": [], "count": 0}
+            }
+    
     def translate_query(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
         """
         Translate a parsed NLP query into executable database queries.
@@ -75,6 +223,70 @@ class QueryTranslator:
     def _handle_search_logs(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
         """Handle log search queries using PostgreSQL."""
         try:
+            # Check if this is a simple "show all logs" type query
+            original_query = parsed_query.original_query.lower()
+            show_all_patterns = [
+                "show all logs", "display all logs", "get all logs", "list all logs",
+                "show every log", "display every log", "get every log", "list every log",
+                "show me all logs", "show me every log", "all logs", "every log"
+            ]
+            
+            # Check for specific entity filters
+            has_container_filter = any(entity.entity_type == EntityType.CONTAINER for entity in parsed_query.entities)
+            has_level_filter = any(entity.entity_type == EntityType.LOG_LEVEL for entity in parsed_query.entities)
+            
+            # Use simple functions for common queries
+            if any(pattern in original_query for pattern in show_all_patterns):
+                if has_container_filter:
+                    # Get container name from entities
+                    container_entity = next((entity for entity in parsed_query.entities if entity.entity_type == EntityType.CONTAINER), None)
+                    if container_entity:
+                        result = self.fetch_logs_by_container(db_session, container_entity.value, limit=100)
+                        return {
+                            "intent": "search_logs",
+                            "results": result["data"]["logs"],
+                            "count": result["data"]["total_count"],
+                            "data_source": "postgresql",
+                            "query_info": {
+                                "query_type": "simple_container_filter",
+                                "container": container_entity.value,
+                                "confidence": 1.0,
+                                "table_queried": "container_logs"
+                            }
+                        }
+                elif has_level_filter:
+                    # Get level from entities
+                    level_entity = next((entity for entity in parsed_query.entities if entity.entity_type == EntityType.LOG_LEVEL), None)
+                    if level_entity:
+                        result = self.fetch_logs_by_level(db_session, level_entity.value, limit=100)
+                        return {
+                            "intent": "search_logs",
+                            "results": result["data"]["logs"],
+                            "count": result["data"]["total_count"],
+                            "data_source": "postgresql",
+                            "query_info": {
+                                "query_type": "simple_level_filter",
+                                "level": level_entity.value,
+                                "confidence": 1.0,
+                                "table_queried": "container_logs"
+                            }
+                        }
+                else:
+                    # Simple fetch all logs
+                    result = self.fetch_all_logs(db_session, limit=100)
+                    return {
+                        "intent": "search_logs",
+                        "results": result["data"]["logs"],
+                        "count": result["data"]["total_count"],
+                        "data_source": "postgresql",
+                        "query_info": {
+                            "query_type": "simple_fetch_all",
+                            "confidence": 1.0,
+                            "table_queried": "container_logs"
+                        }
+                    }
+            
+            # Fall back to complex filtering for specific searches
             # Determine which table to query
             model = self._determine_log_table(parsed_query)
             
