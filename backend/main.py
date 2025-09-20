@@ -28,10 +28,12 @@ from db_models import (
     MetricsModel, DockerEventsModel, ContainerLogsModel, 
     AlertsModel, EmailNotificationsModel
 )
-from routes import router as api_router
+import routes as routes_module
 from routes_nlp import router as nlp_basic_router
 from api.nlp_endpoints import nlp_router
-from routes.logs_api import router as logs_api_router
+from logs_api import router as logs_api_router
+
+api_router = routes_module.router
 
 # Create logs directory if it doesn't exist
 logs_dir = Path("logs")

@@ -11,8 +11,8 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field, validator
 
-from ..services.log_search import get_log_search_service, LogFilterHelpers
-from ..services.log_indexer import get_log_indexer
+from services.log_search import get_log_search_service, LogFilterHelpers
+from services.log_indexer import get_log_indexer
 
 logger = logging.getLogger(__name__)
 
