@@ -15,7 +15,6 @@ from db_models import (
     MetricsModel, EmailNotificationsModel
 )
 from services.nlp_query_parser import ParsedQuery, QueryIntent, EntityType
-from services.log_search import LogSearchService
 
 
 class QueryTranslator:
@@ -27,7 +26,7 @@ class QueryTranslator:
     """
     
     def __init__(self):
-        """Initialize the query translator."""
+        """Initialize the query translator with intent handlers."""
         self.model_mapping = {
             "logs": ContainerLogsModel,
             "container_logs": ContainerLogsModel,
@@ -36,7 +35,15 @@ class QueryTranslator:
             "metrics": MetricsModel,
             "notifications": EmailNotificationsModel
         }
-        self.log_search_service = LogSearchService()
+        
+        # Map query intents to handler methods
+        self.intent_handlers = {
+            QueryIntent.SEARCH_LOGS: self._handle_search_logs,
+            QueryIntent.SHOW_ALERTS: self._handle_show_alerts,
+            QueryIntent.GENERATE_REPORT: self._handle_generate_report,
+            QueryIntent.INVESTIGATE: self._handle_investigate,
+            QueryIntent.ANALYZE_TRENDS: self._handle_analyze_trends
+        }
     
     def translate_query(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
         """
@@ -66,86 +73,101 @@ class QueryTranslator:
             }
     
     def _handle_search_logs(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
-        """Handle log search queries using OpenSearch."""
+        """Handle log search queries using PostgreSQL."""
         try:
-            # Extract search parameters from parsed query
-            search_params = self._extract_opensearch_params(parsed_query)
+            # Determine which table to query
+            model = self._determine_log_table(parsed_query)
             
-            # Use OpenSearch log search service
-            search_results = self.log_search_service.search_logs(
-                query=search_params.get("query"),
-                start_time=search_params.get("start_time"),
-                end_time=search_params.get("end_time"),
-                containers=search_params.get("containers"),
-                hosts=search_params.get("hosts"),
-                environments=search_params.get("environments"),
-                log_levels=search_params.get("log_levels"),
-                size=100
-            )
+            # Build base query
+            query = db_session.query(model)
+            
+            # Apply filters
+            query = self._apply_filters(query, parsed_query, model)
+            
+            # Apply time range filter
+            query = self._apply_time_filter(query, parsed_query, model)
+            
+            # Order by timestamp descending
+            query = query.order_by(desc(model.timestamp))
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Limit results for display
+            results = query.limit(100).all()
+            
+            # Serialize results
+            serialized_results = [self._serialize_result(result) for result in results]
             
             return {
                 "intent": "search_logs",
-                "results": search_results.get("hits", []),
-                "count": search_results.get("total", 0),
-                "data_source": "opensearch",
+                "results": serialized_results,
+                "count": total_count,
+                "data_source": "postgresql",
                 "query_info": {
-                    "filters_applied": search_params,
+                    "filters_applied": self._get_applied_filters(parsed_query),
                     "time_range": parsed_query.structured_params.get("time_range"),
                     "confidence": parsed_query.confidence,
-                    "opensearch_query": search_results.get("query_info", {})
+                    "table_queried": model.__tablename__
                 }
             }
             
         except Exception as e:
             return {
                 "intent": "search_logs",
-                "error": f"OpenSearch query failed: {str(e)}",
+                "error": f"PostgreSQL query failed: {str(e)}",
                 "results": [],
                 "count": 0,
                 "fallback_attempted": True
             }
     
     def _handle_show_alerts(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
-        """Handle alert queries using OpenSearch."""
+        """Handle alert queries using PostgreSQL."""
         try:
-            # Extract search parameters from parsed query
-            search_params = self._extract_opensearch_params(parsed_query)
+            # Build base query for alerts
+            query = db_session.query(AlertsModel)
             
-            # Extract severity filter
+            # Apply severity filter
             severity_entities = [e for e in parsed_query.entities if e.entity_type == EntityType.SEVERITY]
             if severity_entities:
                 severities = [e.value.upper() for e in severity_entities]
-                search_params["severities"] = severities
+                query = query.filter(AlertsModel.severity.in_(severities))
             
-            # Use OpenSearch log search service for alerts
-            search_results = self.log_search_service.search_alerts(
-                query=search_params.get("query"),
-                start_time=search_params.get("start_time"),
-                end_time=search_params.get("end_time"),
-                severities=search_params.get("severities"),
-                containers=search_params.get("containers"),
-                hosts=search_params.get("hosts"),
-                environments=search_params.get("environments"),
-                size=50
-            )
+            # Apply filters
+            query = self._apply_filters(query, parsed_query, AlertsModel)
+            
+            # Apply time range filter
+            query = self._apply_time_filter(query, parsed_query, AlertsModel)
+            
+            # Order by timestamp descending
+            query = query.order_by(desc(AlertsModel.timestamp))
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Limit results for display
+            results = query.limit(50).all()
+            
+            # Serialize results
+            serialized_results = [self._serialize_result(result) for result in results]
             
             return {
                 "intent": "show_alerts",
-                "results": search_results.get("hits", []),
-                "count": search_results.get("total", 0),
-                "data_source": "opensearch",
+                "results": serialized_results,
+                "count": total_count,
+                "data_source": "postgresql",
                 "query_info": {
-                    "filters_applied": search_params,
+                    "filters_applied": self._get_applied_filters(parsed_query),
                     "time_range": parsed_query.structured_params.get("time_range"),
                     "confidence": parsed_query.confidence,
-                    "opensearch_query": search_results.get("query_info", {})
+                    "table_queried": "alerts"
                 }
             }
             
         except Exception as e:
             return {
                 "intent": "show_alerts",
-                "error": f"OpenSearch alert query failed: {str(e)}",
+                "error": f"PostgreSQL query failed: {str(e)}",
                 "results": [],
                 "count": 0,
                 "fallback_attempted": True
@@ -745,53 +767,7 @@ class QueryTranslator:
             "trend": "stable"
         }
     
-    def _extract_opensearch_params(self, parsed_query: ParsedQuery) -> Dict[str, Any]:
-        """Extract OpenSearch search parameters from parsed query."""
-        params = {}
-        
-        # Extract search query text
-        if hasattr(parsed_query, 'search_terms') and parsed_query.search_terms:
-            params["query"] = " ".join(parsed_query.search_terms)
-        elif parsed_query.original_query:
-            # Use original query as fallback for text search
-            params["query"] = parsed_query.original_query
-        
-        # Extract time range
-        time_range = parsed_query.structured_params.get("time_range")
-        if time_range:
-            if isinstance(time_range, dict):
-                params["start_time"] = time_range.get("start")
-                params["end_time"] = time_range.get("end")
-        
-        # Extract entities for filtering
-        containers = []
-        hosts = []
-        log_levels = []
-        
-        for entity in parsed_query.entities:
-            if entity.entity_type == EntityType.CONTAINER:
-                containers.append(entity.value)
-            elif entity.entity_type == EntityType.HOST:
-                hosts.append(entity.value)
-            elif entity.entity_type == EntityType.LOG_LEVEL:
-                log_levels.append(entity.value.upper())
-        
-        if containers:
-            params["containers"] = containers
-        if hosts:
-            params["hosts"] = hosts
-        if log_levels:
-            params["log_levels"] = log_levels
-        
-        # Extract environment if specified
-        environments = []
-        for entity in parsed_query.entities:
-            if entity.entity_type == EntityType.ENVIRONMENT:
-                environments.append(entity.value)
-        if environments:
-            params["environments"] = environments
-        
-        return params
+
 
     def _get_query_suggestions(self) -> List[str]:
         """Get query suggestions for unsupported intents."""
