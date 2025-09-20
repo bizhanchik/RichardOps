@@ -32,6 +32,7 @@ import routes as routes_module
 from routes_nlp import router as nlp_basic_router
 from api.nlp_endpoints import nlp_router
 from logs_api import router as logs_api_router
+from routers.containers import router as containers_router
 from services.opensearch_client import initialize_opensearch, cleanup_opensearch
 
 api_router = routes_module.router
@@ -95,8 +96,9 @@ app.include_router(api_router)
 app.include_router(nlp_basic_router)  # Basic NLP endpoints (/nlp/test, /nlp/process)
 app.include_router(nlp_router)        # Advanced NLP query system (/api/nlp/*)
 
-# Include logs API router
+# Include specialized routers
 app.include_router(logs_api_router)   # OpenSearch log search and analytics (/api/logs/*)
+app.include_router(containers_router) # Container status and events (/containers)
 
 
 @app.exception_handler(Exception)
