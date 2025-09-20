@@ -67,8 +67,11 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db():
     """
-    Initialize database by creating all tables and indexes safely.
+    Initialize database by creating all tables and required extensions safely.
     This should be called on application startup.
+    
+    Note: Indexes are managed by Alembic migrations, not here, to avoid
+    duplicate creation errors.
     """
     async with engine.begin() as conn:
         # Import all models to ensure they are registered with Base
@@ -80,32 +83,29 @@ async def init_db():
         # Create all tables (this will skip existing tables)
         await conn.run_sync(Base.metadata.create_all)
         
-        # Create custom indexes safely using IF NOT EXISTS
-        await _create_custom_indexes_safely(conn)
+        # Only create required extensions, not indexes (handled by migrations)
+        await _create_required_extensions(conn)
 
 
-async def _create_custom_indexes_safely(conn):
+async def _create_required_extensions(conn):
     """
-    Create custom indexes that might not be handled properly by create_all().
-    Uses IF NOT EXISTS to avoid duplicate index errors.
+    Create required PostgreSQL extensions safely.
+    Extensions can be created multiple times without errors.
     """
-    # Custom indexes that need special handling - order matters!
-    custom_indexes = [
-        # First: Enable pg_trgm extension for trigram matching
+    # Required extensions for the application
+    extensions = [
+        # Enable pg_trgm extension for trigram matching (needed for GIN indexes)
         "CREATE EXTENSION IF NOT EXISTS pg_trgm;",
-        
-        # Second: Create GIN index for full-text search on container logs
-        "CREATE INDEX IF NOT EXISTS idx_container_logs_message_gin ON container_logs USING gin (message gin_trgm_ops);"
     ]
     
-    for index_sql in custom_indexes:
+    for extension_sql in extensions:
         try:
-            await conn.execute(text(index_sql))
-            logger.info(f"Successfully executed: {index_sql.strip()}")
+            await conn.execute(text(extension_sql))
+            logger.info(f"Successfully executed: {extension_sql.strip()}")
         except Exception as e:
             # Log the error but don't crash the application
-            logger.warning(f"Index creation warning (may already exist): {e}")
-            # Continue with other indexes
+            logger.warning(f"Extension creation warning: {e}")
+            # Continue with other extensions
 
 
 async def close_db():
