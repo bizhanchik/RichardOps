@@ -89,17 +89,13 @@ async def _create_custom_indexes_safely(conn):
     Create custom indexes that might not be handled properly by create_all().
     Uses IF NOT EXISTS to avoid duplicate index errors.
     """
+    # Custom indexes that need special handling - order matters!
     custom_indexes = [
-        # GIN index for full-text search on container logs message
-        """
-        CREATE INDEX IF NOT EXISTS idx_container_logs_message_gin 
-        ON container_logs USING gin (message gin_trgm_ops)
-        """,
+        # First: Enable pg_trgm extension for trigram matching
+        "CREATE EXTENSION IF NOT EXISTS pg_trgm;",
         
-        # Enable pg_trgm extension if not already enabled
-        """
-        CREATE EXTENSION IF NOT EXISTS pg_trgm
-        """,
+        # Second: Create GIN index for full-text search on container logs
+        "CREATE INDEX IF NOT EXISTS idx_container_logs_message_gin ON container_logs USING gin (message gin_trgm_ops);"
     ]
     
     for index_sql in custom_indexes:
