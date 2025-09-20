@@ -4,7 +4,7 @@ import os
 import hmac
 import hashlib
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -91,7 +91,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={
             "status": "error",
             "message": "Internal server error",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
     )
 
@@ -209,7 +209,7 @@ async def ingest_monitoring_data(
 
         # Pretty print to console
         print("\n" + "="*80)
-        print(f"📊 MONITORING DATA RECEIVED - {datetime.now().isoformat()}")
+        print(f"📊 MONITORING DATA RECEIVED - {datetime.now(timezone.utc).isoformat()}")
         print("="*80)
         print(f"🖥️  Host: {payload.host}")
         print(f"🆔 Server ID: {payload.server_id or 'N/A'}")
@@ -254,7 +254,7 @@ async def ingest_monitoring_data(
             raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
         
         log_entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": "monitoring_data_received",
             "payload": payload_dict
         }
@@ -304,7 +304,7 @@ async def ingest_monitoring_data(
             
             # Log all analysis results to dedicated alerts.log file as structured JSON
             alert_log_entry = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "event_type": "security_analysis",
                 "host": payload.host,
                 "server_id": payload.server_id,
@@ -419,7 +419,7 @@ async def ingest_monitoring_data(
         return {
             "status": "success",
             "message": f"Monitoring data received from {payload.host}",
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
     except Exception as e:
@@ -507,7 +507,7 @@ async def get_current_alerts(db: AsyncSession = Depends(get_db_session)) -> Dict
             "status": "success",
             "count": len(combined_alerts),
             "alerts": combined_alerts,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "summary": {
                 "attack_alerts": len(attack_alerts),
                 "rule_alerts": len(rules_alerts),
@@ -531,7 +531,7 @@ async def health_check(db: AsyncSession = Depends(get_db_session)) -> Dict[str, 
     """
     health_status = {
         "status": "ok",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": "monitoring-backend",
         "version": "1.0.0",
         "checks": {}
@@ -582,7 +582,7 @@ async def readiness_check(db: AsyncSession = Depends(get_db_session)) -> Dict[st
             
         return {
             "status": "ready",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "service": "monitoring-backend"
         }
     except Exception as e:
@@ -645,7 +645,7 @@ async def get_recent_metrics(
             "status": "success",
             "metrics": metrics_data,
             "count": len(metrics_data),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
     except Exception as e:
@@ -703,7 +703,7 @@ async def search_logs(
             "count": len(logs_data),
             "query": query,
             "container_filter": container,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
     except Exception as e:
@@ -756,7 +756,7 @@ async def get_recent_events(
             "events": events_data,
             "count": len(events_data),
             "event_type_filter": event_type,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
     except Exception as e:

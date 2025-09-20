@@ -8,7 +8,7 @@ This module provides functionality to:
 """
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from collections import deque
 
@@ -116,7 +116,7 @@ def add_alert(alert: Dict) -> None:
         alert: Alert dictionary with timestamp, container, message, severity
     """
     # Add current processing timestamp for tracking
-    alert["processed_at"] = datetime.now().isoformat()
+    alert["processed_at"] = datetime.now(timezone.utc).isoformat()
     ALERTS.append(alert)
 
 

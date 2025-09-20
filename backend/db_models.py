@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, 
     Numeric, String, Text, Index, CheckConstraint
@@ -14,7 +14,7 @@ class MetricsModel(Base):
     __tablename__ = "metrics"
     
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    timestamp = Column(DateTime, nullable=False, index=True)
+    timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     cpu_usage = Column(Numeric(5, 2))
     memory_usage = Column(Numeric(5, 2))
     disk_usage = Column(Numeric(5, 2))
@@ -34,7 +34,7 @@ class DockerEventsModel(Base):
     __tablename__ = "docker_events"
     
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    timestamp = Column(DateTime, nullable=False, index=True)
+    timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     type = Column(String(50))
     action = Column(String(50))
     container = Column(String(255))
@@ -72,7 +72,7 @@ class AlertsModel(Base):
     __tablename__ = "alerts"
     
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    timestamp = Column(DateTime, nullable=False, index=True)
+    timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     severity = Column(String(10), nullable=False)
     type = Column(String(100))
     message = Column(Text)
@@ -107,7 +107,7 @@ class EmailNotificationsModel(Base):
     
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     alert_id = Column(BigInteger, ForeignKey('alerts.id', ondelete='CASCADE'), nullable=False)
-    sent_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    sent_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     recipient = Column(String(255), nullable=False)
     subject = Column(String(255))
     status = Column(String(20), nullable=False)  # success/failed

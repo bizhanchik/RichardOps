@@ -13,7 +13,7 @@ This module provides functionality to:
 import re
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 from collections import deque
 from urllib.parse import unquote
@@ -292,7 +292,7 @@ Evidence Found:
 Recommended Action:
 {recommended_action}
 
-Timestamp: {datetime.now().isoformat()}
+Timestamp: {datetime.now(timezone.utc).isoformat()}
 
 This is an automated security alert. Please investigate immediately.
 """
@@ -389,7 +389,7 @@ def analyze_request(event: Dict[str, Any]) -> Dict[str, Any]:
         # Store the alert in memory
         if result["attack_detected"]:
             alert_entry = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "analysis": result.copy(),
                 "source_event": {
                     "log_count": len(event.get("logs", [])),
