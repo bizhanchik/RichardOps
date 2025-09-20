@@ -636,6 +636,7 @@ async def root() -> Dict[str, str]:
             "events_recent": "/events/recent",
             "logs_search": "/logs/search"
         }
+    }
 
 
 if __name__ == "__main__":
