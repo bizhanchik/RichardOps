@@ -91,13 +91,13 @@ class QueryTranslator:
                 "data": {"logs": [], "count": 0}
             }
     
-    def fetch_logs_by_level(self, db_session: Session, level: str, limit: int = 1000, offset: int = 0) -> Dict[str, Any]:
+    def fetch_logs_by_message_pattern(self, db_session: Session, pattern: str, limit: int = 1000, offset: int = 0) -> Dict[str, Any]:
         """
-        Simple function to fetch logs by log level.
+        Simple function to fetch logs by message pattern.
         
         Args:
             db_session: Database session
-            level: Log level (error, warn, info, debug)
+            pattern: Pattern to search for in log messages
             limit: Maximum number of logs to return
             offset: Number of logs to skip
             
@@ -105,14 +105,14 @@ class QueryTranslator:
             Dictionary with logs data and metadata
         """
         try:
-            # Get total count for this level
+            # Get total count for this pattern
             total_count = db_session.query(ContainerLogsModel)\
-                .filter(ContainerLogsModel.level.ilike(f"%{level}%"))\
+                .filter(ContainerLogsModel.message.ilike(f"%{pattern}%"))\
                 .count()
             
-            # Fetch logs with level filter
+            # Fetch logs with pattern filter
             logs = db_session.query(ContainerLogsModel)\
-                .filter(ContainerLogsModel.level.ilike(f"%{level}%"))\
+                .filter(ContainerLogsModel.message.ilike(f"%{pattern}%"))\
                 .order_by(desc(ContainerLogsModel.timestamp))\
                 .limit(limit)\
                 .offset(offset)\
@@ -126,11 +126,11 @@ class QueryTranslator:
                     "total_count": total_count,
                     "limit": limit,
                     "offset": offset,
-                    "level_filter": level,
+                    "pattern_filter": pattern,
                     "has_more": offset + len(logs) < total_count
                 },
                 "metadata": {
-                    "query_type": "fetch_logs_by_level",
+                    "query_type": "fetch_logs_by_message_pattern",
                     "processing_time_ms": 0,
                     "confidence": 1.0
                 }
@@ -138,7 +138,7 @@ class QueryTranslator:
         except Exception as e:
             return {
                 "success": False,
-                "error": f"Failed to fetch logs by level: {str(e)}",
+                "error": f"Failed to fetch logs by pattern: {str(e)}",
                 "data": {"logs": [], "count": 0}
             }
     
@@ -158,12 +158,12 @@ class QueryTranslator:
         try:
             # Get total count for this container
             total_count = db_session.query(ContainerLogsModel)\
-                .filter(ContainerLogsModel.container_name.ilike(f"%{container}%"))\
+                .filter(ContainerLogsModel.container.ilike(f"%{container}%"))\
                 .count()
             
             # Fetch logs with container filter
             logs = db_session.query(ContainerLogsModel)\
-                .filter(ContainerLogsModel.container_name.ilike(f"%{container}%"))\
+                .filter(ContainerLogsModel.container.ilike(f"%{container}%"))\
                 .order_by(desc(ContainerLogsModel.timestamp))\
                 .limit(limit)\
                 .offset(offset)\
@@ -190,6 +190,111 @@ class QueryTranslator:
             return {
                 "success": False,
                 "error": f"Failed to fetch logs by container: {str(e)}",
+                "data": {"logs": [], "count": 0}
+            }
+    
+    def fetch_latest_logs(self, db_session: Session, limit: int = 50) -> Dict[str, Any]:
+        """
+        Fetch the most recent logs ordered by timestamp.
+        
+        Args:
+            db_session: SQLAlchemy database session
+            limit: Maximum number of logs to return (default: 50)
+            
+        Returns:
+            Dict containing success status, logs data, and metadata
+        """
+        try:
+            # Query for the most recent logs ordered by timestamp descending
+            query = db_session.query(ContainerLogsModel).order_by(desc(ContainerLogsModel.timestamp))
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply limit
+            logs = query.limit(limit).all()
+            
+            # Serialize results
+            serialized_logs = [self._serialize_result(log) for log in logs]
+            
+            return {
+                "success": True,
+                "data": {
+                    "logs": serialized_logs,
+                    "count": len(serialized_logs),
+                    "total_count": total_count,
+                    "limit": limit,
+                    "offset": 0,
+                    "has_more": len(serialized_logs) < total_count
+                },
+                "metadata": {
+                    "query_type": "fetch_latest_logs",
+                    "processing_time_ms": 0,
+                    "confidence": 1.0
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to fetch latest logs: {str(e)}",
+                "data": {"logs": [], "count": 0}
+            }
+    
+    def fetch_logs_last_hour(self, db_session: Session, limit: int = 1000, offset: int = 0) -> Dict[str, Any]:
+        """
+        Fetch all logs from the last hour.
+        
+        Args:
+            db_session: SQLAlchemy database session
+            limit: Maximum number of logs to return (default: 1000)
+            offset: Number of logs to skip (default: 0)
+            
+        Returns:
+            Dict containing success status, logs data, and metadata
+        """
+        try:
+            # Calculate time one hour ago
+            one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+            
+            # Query for logs from the last hour
+            query = db_session.query(ContainerLogsModel).filter(
+                ContainerLogsModel.timestamp >= one_hour_ago
+            ).order_by(desc(ContainerLogsModel.timestamp))
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            logs = query.offset(offset).limit(limit).all()
+            
+            # Serialize results
+            serialized_logs = [self._serialize_result(log) for log in logs]
+            
+            return {
+                "success": True,
+                "data": {
+                    "logs": serialized_logs,
+                    "count": len(serialized_logs),
+                    "total_count": total_count,
+                    "limit": limit,
+                    "offset": offset,
+                    "time_filter": {
+                        "start_time": one_hour_ago.isoformat(),
+                        "end_time": datetime.utcnow().isoformat(),
+                        "duration": "1 hour"
+                    },
+                    "has_more": offset + len(serialized_logs) < total_count
+                },
+                "metadata": {
+                    "query_type": "fetch_logs_last_hour",
+                    "processing_time_ms": 0,
+                    "confidence": 1.0
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to fetch logs from last hour: {str(e)}",
                 "data": {"logs": [], "count": 0}
             }
     
@@ -223,8 +328,56 @@ class QueryTranslator:
     def _handle_search_logs(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
         """Handle log search queries using PostgreSQL."""
         try:
-            # Check if this is a simple "show all logs" type query
+            # Check for time-based queries first
             original_query = parsed_query.original_query.lower()
+            
+            # Check for latest logs patterns
+            latest_patterns = [
+                "latest logs", "recent logs", "newest logs", "most recent logs",
+                "show latest logs", "get latest logs", "display latest logs",
+                "show recent logs", "get recent logs", "display recent logs",
+                "latest 50", "recent 50", "last 50"
+            ]
+            
+            # Check for last hour patterns
+            last_hour_patterns = [
+                "last hour", "past hour", "previous hour", "logs from last hour",
+                "logs from past hour", "logs from previous hour", "hour ago",
+                "logs in the last hour", "logs in the past hour"
+            ]
+            
+            # Handle time-based queries
+            if any(pattern in original_query for pattern in latest_patterns):
+                result = self.fetch_latest_logs(db_session, limit=50)
+                return {
+                    "intent": "search_logs",
+                    "results": result["data"]["logs"],
+                    "count": result["data"]["total_count"],
+                    "data_source": "postgresql",
+                    "query_info": {
+                        "query_type": "latest_logs",
+                        "limit": 50,
+                        "confidence": 1.0,
+                        "table_queried": "container_logs"
+                    }
+                }
+            
+            if any(pattern in original_query for pattern in last_hour_patterns):
+                result = self.fetch_logs_last_hour(db_session, limit=1000)
+                return {
+                    "intent": "search_logs",
+                    "results": result["data"]["logs"],
+                    "count": result["data"]["total_count"],
+                    "data_source": "postgresql",
+                    "query_info": {
+                        "query_type": "logs_last_hour",
+                        "time_filter": result["data"]["time_filter"],
+                        "confidence": 1.0,
+                        "table_queried": "container_logs"
+                    }
+                }
+            
+            # Check if this is a simple "show all logs" type query
             show_all_patterns = [
                 "show all logs", "display all logs", "get all logs", "list all logs",
                 "show every log", "display every log", "get every log", "list every log",
@@ -255,18 +408,18 @@ class QueryTranslator:
                             }
                         }
                 elif has_level_filter:
-                    # Get level from entities
+                    # Get level from entities and search in message content
                     level_entity = next((entity for entity in parsed_query.entities if entity.entity_type == EntityType.LOG_LEVEL), None)
                     if level_entity:
-                        result = self.fetch_logs_by_level(db_session, level_entity.value, limit=100)
+                        result = self.fetch_logs_by_message_pattern(db_session, level_entity.value, limit=100)
                         return {
                             "intent": "search_logs",
                             "results": result["data"]["logs"],
                             "count": result["data"]["total_count"],
                             "data_source": "postgresql",
                             "query_info": {
-                                "query_type": "simple_level_filter",
-                                "level": level_entity.value,
+                                "query_type": "simple_message_pattern",
+                                "pattern": level_entity.value,
                                 "confidence": 1.0,
                                 "table_queried": "container_logs"
                             }
