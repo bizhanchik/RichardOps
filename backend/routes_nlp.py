@@ -16,10 +16,7 @@ class TextRequest(BaseModel):
     text: str
 
 
-class EmbeddingResponse(BaseModel):
-    """Response model for embedding output."""
-    text: str
-    embedding: List[float]
+
 
 
 class TextResponse(BaseModel):
@@ -29,25 +26,7 @@ class TextResponse(BaseModel):
     status: str
 
 
-@router.post("/nlp/test", response_model=EmbeddingResponse)
-async def test_nlp_embedding(request: TextRequest) -> EmbeddingResponse:
-    """
-    Test endpoint for generating text embeddings.
-    
-    Args:
-        request (TextRequest): Request containing the text to process
-        
-    Returns:
-        EmbeddingResponse: Response containing the original text and its embedding
-    """
-    # Get embedding for the input text
-    embedding = get_embedding(request.text)
-    
-    # Return response with original text and embedding
-    return EmbeddingResponse(
-        text=request.text,
-        embedding=embedding
-    )
+
 
 
 @router.post("/nlp/process", response_model=TextResponse)

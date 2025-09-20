@@ -673,30 +673,7 @@ async def root() -> Dict[str, str]:
     }
 
 
-@app.get("/")
-async def root() -> Dict[str, str]:
-    """
-    Root endpoint providing basic API information.
-    
-    Returns:
-        JSON response with API information
-    """
-    return {
-        "message": "Monitoring Backend API",
-        "version": "1.0.0",
-        "status": "running",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "endpoints": {
-            "health": "/healthz",
-            "readiness": "/readiness", 
-            "ingest": "/ingest",
-            "alerts": "/alerts",
-            "metrics_recent": "/metrics/recent",
-            "metrics_range": "/metrics/range",
-            "events_recent": "/events/recent",
-            "logs_search": "/logs/search"
-        }
-    }
+
 
 
 if __name__ == "__main__":
