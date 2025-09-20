@@ -284,52 +284,57 @@ async def get_containers(
     """
     GET /containers
     Returns a list of containers with their last event information and computed status.
-    Groups docker_events by container and gets the most recent event for each.
+    Gets all distinct containers from both docker_events and container_logs tables.
     """
     try:
-        # Subquery to get the latest timestamp for each container
-        latest_events_subquery = (
+        # First, get all distinct containers from both tables
+        distinct_containers_query = select(
+            DockerEventsModel.container.label('container')
+        ).where(
+            DockerEventsModel.container.isnot(None)
+        ).union(
             select(
-                DockerEventsModel.container,
-                func.max(DockerEventsModel.timestamp).label('max_timestamp')
+                ContainerLogsModel.container.label('container')
+            ).where(
+                ContainerLogsModel.container.isnot(None)
             )
-            .where(DockerEventsModel.container.isnot(None))
-            .group_by(DockerEventsModel.container)
-            .subquery()
-        )
+        ).distinct().order_by('container')
         
-        # Main query to get container details with latest event info
-        query = (
-            select(
-                DockerEventsModel.container,
-                DockerEventsModel.timestamp,
-                DockerEventsModel.action
-            )
-            .join(
-                latest_events_subquery,
-                and_(
-                    DockerEventsModel.container == latest_events_subquery.c.container,
-                    DockerEventsModel.timestamp == latest_events_subquery.c.max_timestamp
-                )
-            )
-            .order_by(DockerEventsModel.container)
-        )
+        containers_result = await db.execute(distinct_containers_query)
+        all_containers = [row.container for row in containers_result.fetchall()]
         
-        result = await db.execute(query)
-        containers_data = result.fetchall()
-        
-        # Convert to response models with status computation
+        # For each container, get the latest event from docker_events
         containers_list = []
-        for container_data in containers_data:
-            container_name = container_data.container
-            last_event_time = container_data.timestamp
-            last_action = container_data.action or "unknown"
+        for container_name in all_containers:
+            # Get the latest event for this container
+            latest_event_query = (
+                select(
+                    DockerEventsModel.timestamp,
+                    DockerEventsModel.action
+                )
+                .where(DockerEventsModel.container == container_name)
+                .order_by(desc(DockerEventsModel.timestamp))
+                .limit(1)
+            )
+            
+            event_result = await db.execute(latest_event_query)
+            event_data = event_result.fetchone()
+            
+            if event_data:
+                last_event_time = event_data.timestamp
+                last_action = event_data.action or "unknown"
+            else:
+                # If no events found, use current time and unknown action
+                last_event_time = datetime.now(timezone.utc)
+                last_action = "unknown"
             
             # Compute status based on last_action
             if last_action == "start":
                 status = "running"
-            elif last_action in ["stop", "die"]:
+            elif last_action in ["stop", "die", "kill"]:
                 status = "stopped"
+            elif "exec" in last_action:
+                status = "running"  # exec commands indicate container is running
             else:
                 status = "unknown"
             
