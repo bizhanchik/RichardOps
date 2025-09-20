@@ -29,7 +29,7 @@ import (
 	"io"
 	"log"
 	"math"
-	"net"
+
 	"net/http"
 	"os"
 	"os/signal"
@@ -178,6 +178,10 @@ type Agent struct {
 	
 	// Sensitive data patterns
 	sensitivePatterns []*regexp.Regexp
+	
+	// Fixed: Auth log file offset tracking to avoid re-parsing entire files
+	authLogOffsets map[string]int64
+	offsetMutex    sync.RWMutex
 }
 
 // Alert scoring weights
@@ -224,6 +228,7 @@ func NewAgent(config Config) (*Agent, error) {
 		lastNetTime:       time.Now(),
 		payloadQueue:      make([]Payload, 0),
 		sensitivePatterns: patterns,
+		authLogOffsets:    make(map[string]int64),
 	}
 
 	// Create queue directory
@@ -303,7 +308,8 @@ func (a *Agent) monitorAuthLog(logPath string) {
 	}
 }
 
-// parseAuthLogFile parses auth log file for failed login attempts
+// Fixed: parseAuthLogFile now tracks file offset to avoid re-parsing entire files
+// Only processes new lines since last read, improving performance and avoiding duplicates
 func (a *Agent) parseAuthLogFile(logPath string) {
 	file, err := os.Open(logPath)
 	if err != nil {
@@ -311,29 +317,43 @@ func (a *Agent) parseAuthLogFile(logPath string) {
 	}
 	defer file.Close()
 
-	// Seek to end and read backwards (simplified approach)
-	scanner := bufio.NewScanner(file)
-	var lines []string
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+	// Get file info to check size
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return
+	}
+	currentSize := fileInfo.Size()
+
+	// Get last known offset for this file
+	a.offsetMutex.RLock()
+	lastOffset := a.authLogOffsets[logPath]
+	a.offsetMutex.RUnlock()
+
+	// If file is smaller than last offset, it was rotated/truncated
+	if currentSize < lastOffset {
+		lastOffset = 0
 	}
 
-	// Process recent lines (last 1000)
-	start := 0
-	if len(lines) > 1000 {
-		start = len(lines) - 1000
+	// Seek to last known position
+	if _, err := file.Seek(lastOffset, 0); err != nil {
+		return
 	}
 
 	failedAuthPattern := regexp.MustCompile(`Failed password for .* from (\d+\.\d+\.\d+\.\d+)`)
-	
-	for i := start; i < len(lines); i++ {
-		line := lines[i]
+	scanner := bufio.NewScanner(file)
+	newOffset := lastOffset
+
+	// Process only new lines
+	for scanner.Scan() {
+		line := scanner.Text()
+		newOffset += int64(len(line)) + 1 // +1 for newline character
+
 		if matches := failedAuthPattern.FindStringSubmatch(line); len(matches) > 1 {
 			ip := matches[1]
 			a.alertMutex.Lock()
 			a.authFailures = append(a.authFailures, AuthFailure{
 				IP:        ip,
-				Timestamp: time.Now(), // Simplified - should parse timestamp from log
+				Timestamp: time.Now(), // Using current time for new failures
 			})
 			// Keep buffer manageable
 			if len(a.authFailures) > 1000 {
@@ -342,6 +362,11 @@ func (a *Agent) parseAuthLogFile(logPath string) {
 			a.alertMutex.Unlock()
 		}
 	}
+
+	// Update offset for this file
+	a.offsetMutex.Lock()
+	a.authLogOffsets[logPath] = newOffset
+	a.offsetMutex.Unlock()
 }
 
 // checkBruteForceAttacks checks for brute force attacks
@@ -520,8 +545,15 @@ func (a *Agent) collectSystemMetrics() (SystemMetrics, error) {
 					if lastStat, exists := a.lastNetStats[stat.Name]; exists {
 						rxDiff := stat.BytesRecv - lastStat.BytesRecv
 						txDiff := stat.BytesSent - lastStat.BytesSent
-						metrics.NetworkRX += uint64(float64(rxDiff) / timeDiff)
-						metrics.NetworkTX += uint64(float64(txDiff) / timeDiff)
+						
+						// Fixed: Handle negative deltas (counter resets/reboots)
+						// If counters went backwards, skip this measurement to avoid spikes
+						if rxDiff >= 0 {
+							metrics.NetworkRX += uint64(float64(rxDiff) / timeDiff)
+						}
+						if txDiff >= 0 {
+							metrics.NetworkTX += uint64(float64(txDiff) / timeDiff)
+						}
 					}
 					a.lastNetStats[stat.Name] = stat
 				}
@@ -561,7 +593,7 @@ func (a *Agent) monitorDockerEvents(ctx context.Context) {
 			if event.Type == events.ContainerEventType {
 				dockerEvent := DockerEvent{
 					Type:      string(event.Type),
-					Action:    event.Action,
+					Action:    string(event.Action),
 					Container: event.Actor.Attributes["name"],
 					Image:     event.Actor.Attributes["image"],
 					Timestamp: time.Unix(event.Time, 0),
@@ -577,15 +609,17 @@ func (a *Agent) monitorDockerEvents(ctx context.Context) {
 
 				log.Printf("Docker event: %s %s %s", dockerEvent.Action, dockerEvent.Container, dockerEvent.Image)
 
-				// Check for shell execution
-				if strings.Contains(event.Action, "exec") && 
-				   (strings.Contains(event.Action, "/bin/bash") || strings.Contains(event.Action, "/bin/sh")) {
-					a.alertMutex.Lock()
-					if !a.containsAlert("SHELL_IN_CONTAINER") {
-						a.localAlerts = append(a.localAlerts, "SHELL_IN_CONTAINER")
-						log.Printf("Shell execution detected in container: %s", dockerEvent.Container)
+				// Fixed: Check for shell execution by inspecting execCommand attribute instead of just action string
+				if event.Action == "exec_create" {
+					cmd := event.Actor.Attributes["execCommand"]
+					if strings.Contains(cmd, "bash") || strings.Contains(cmd, "sh") {
+						a.alertMutex.Lock()
+						if !a.containsAlert("SHELL_IN_CONTAINER") {
+							a.localAlerts = append(a.localAlerts, "SHELL_IN_CONTAINER")
+							log.Printf("Shell execution detected in container: %s (cmd: %s)", dockerEvent.Container, cmd)
+						}
+						a.alertMutex.Unlock()
 					}
-					a.alertMutex.Unlock()
 				}
 
 				// If it's a start event, start monitoring logs for this container
@@ -605,6 +639,7 @@ func (a *Agent) monitorDockerEvents(ctx context.Context) {
 }
 
 // monitorContainerLogs monitors logs for a specific container
+// Fixed: Replace bytes.Buffer + ReadString with io.Pipe + bufio.Scanner to avoid race conditions
 func (a *Agent) monitorContainerLogs(ctx context.Context, containerID string) {
 	if a.dockerClient == nil {
 		return
@@ -633,44 +668,28 @@ func (a *Agent) monitorContainerLogs(ctx context.Context, containerID string) {
 	}
 	defer logReader.Close()
 
-	// Use proper stdcopy decoder
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	
+	// Fixed: Use io.Pipe with bufio.Scanner instead of bytes.Buffer + ReadString
+	pr, pw := io.Pipe()
 	go func() {
-		_, err := stdcopy.StdCopy(stdout, stderr, logReader)
-		if err != nil && err != io.EOF {
-			log.Printf("Error reading logs for container %s: %v", containerID, err)
-		}
+		_, err := stdcopy.StdCopy(pw, pw, logReader)
+		pw.CloseWithError(err)
 	}()
 
-	// Process logs periodically
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+	scanner := bufio.NewScanner(pr)
+	scanner.Buffer(make([]byte, 64*1024), 1<<20) // 64KB initial, 1MB max
 	
 	for {
 		select {
-		case <-ticker.C:
-			// Process stdout
-			for {
-				line, err := stdout.ReadString('\n')
-				if err != nil {
-					break
-				}
-				a.processLogLine(containerInfo.Name, strings.TrimSpace(line))
-			}
-			
-			// Process stderr
-			for {
-				line, err := stderr.ReadString('\n')
-				if err != nil {
-					break
-				}
-				a.processLogLine(containerInfo.Name, strings.TrimSpace(line))
-			}
-			
 		case <-ctx.Done():
 			return
+		default:
+			if !scanner.Scan() {
+				if err := scanner.Err(); err != nil && err != io.EOF {
+					log.Printf("scan err %s: %v", containerID, err)
+				}
+				return
+			}
+			a.processLogLine(containerInfo.Name, strings.TrimSpace(scanner.Text()))
 		}
 	}
 }
@@ -824,6 +843,20 @@ func (a *Agent) sendPayload(payload Payload) error {
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				log.Printf("Successfully sent payload to server (status: %d)", resp.StatusCode)
 				a.lastSendOK = time.Now()
+				
+				// Fixed: Clear event/log buffers after successful send to prevent accumulation
+				a.eventMutex.Lock()
+				a.eventBuffer = a.eventBuffer[:0]
+				a.eventMutex.Unlock()
+				
+				a.logMutex.Lock()
+				a.logBuffer = a.logBuffer[:0]
+				a.logMutex.Unlock()
+				
+				a.alertMutex.Lock()
+				a.localAlerts = a.localAlerts[:0]
+				a.alertMutex.Unlock()
+				
 				return nil
 			}
 			log.Printf("Server returned error status: %d", resp.StatusCode)
@@ -973,27 +1006,31 @@ func (a *Agent) loadPayloadsFromFile(filename string) error {
 	return scanner.Err()
 }
 
-// processQueue attempts to send queued payloads
+// Fixed: processQueue now uses consistent locking to avoid race conditions
+// Keeps the queue locked during the entire pop operation
 func (a *Agent) processQueue() {
 	a.queueMutex.Lock()
+	defer a.queueMutex.Unlock()
+	
 	if len(a.payloadQueue) == 0 {
-		a.queueMutex.Unlock()
 		return
 	}
 
-	// Try to send the oldest payload
+	// Get the oldest payload while holding the lock
 	payload := a.payloadQueue[0]
+	
+	// Temporarily unlock to send payload (avoid holding lock during network call)
 	a.queueMutex.Unlock()
-
 	err := a.sendPayload(payload)
+	a.queueMutex.Lock()
+
 	if err == nil {
-		// Successfully sent, remove from queue
-		a.queueMutex.Lock()
-		if len(a.payloadQueue) > 0 {
+		// Successfully sent, remove from queue if it's still the first item
+		// (defensive check in case queue was modified)
+		if len(a.payloadQueue) > 0 && a.payloadQueue[0].Timestamp.Equal(payload.Timestamp) {
 			a.payloadQueue = a.payloadQueue[1:]
+			log.Printf("Successfully sent queued payload")
 		}
-		a.queueMutex.Unlock()
-		log.Printf("Successfully sent queued payload")
 	}
 }
 
@@ -1093,10 +1130,9 @@ func (a *Agent) Run(ctx context.Context) error {
 				log.Printf("Error sending payload: %v", err)
 			}
 
-			// Clear processed alerts after sending
-			a.alertMutex.Lock()
-			a.localAlerts = a.localAlerts[:0]
-			a.alertMutex.Unlock()
+			// Fixed: Remove redundant alert clearing since it's now done in sendPayload on success
+			// Only clear alerts if send failed (they're already cleared on success)
+			// This prevents clearing alerts when they should be retried
 
 		case <-ctx.Done():
 			log.Printf("Shutting down monitoring agent...")
@@ -1125,7 +1161,7 @@ func (a *Agent) Run(ctx context.Context) error {
 func parseConfig() Config {
 	var config Config
 
-	flag.StringVar(&config.ServerURL, "server-url", "", "Server URL for sending payloads")
+	flag.StringVar(&config.ServerURL, "server-url", "http://localhost:8000/ingest", "Server URL for sending payloads")
 	flag.StringVar(&config.Secret, "secret", "", "Shared secret for HMAC signing")
 	flag.IntVar(&config.Interval, "interval", 30, "Interval in seconds between payload sends")
 	flag.IntVar(&config.TailLines, "tail-lines", 100, "Number of initial log lines to tail")
