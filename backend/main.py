@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from models import Payload
 from services.alerts import should_send_email, get_alert_severity, format_alert_summary
 from services.email import send_alert_email, format_alert_email_content
+from services.rules import process_log_entry, get_alerts, add_alert
 
 # Create logs directory if it doesn't exist
 logs_dir = Path("logs")
@@ -155,6 +156,53 @@ async def ingest_monitoring_data(
         
         logger.info(f"Monitoring data received from {payload.host}: {json.dumps(log_entry, indent=2, default=json_serializer)}")
         
+        # Process logs through rules engine
+        high_severity_alerts = []
+        if payload.logs:
+            for log in payload.logs:
+                # Convert LogEntry to dict for rules processing
+                log_dict = {
+                    "container": log.container,
+                    "message": log.message,
+                    "timestamp": log.timestamp.isoformat() if hasattr(log.timestamp, 'isoformat') else str(log.timestamp)
+                }
+                
+                # Process through rules engine
+                alert = process_log_entry(log_dict)
+                if alert:
+                    # Add MEDIUM and HIGH severity alerts to the global store
+                    if alert["severity"] in ["MEDIUM", "HIGH"]:
+                        add_alert(alert)
+                        logger.info(f"Alert generated: {alert['severity']} - {alert['container']} - {alert['message'][:100]}")
+                    
+                    # Track HIGH severity alerts for immediate email notification
+                    if alert["severity"] == "HIGH":
+                        high_severity_alerts.append(alert)
+        
+        # Send immediate email for HIGH severity alerts
+        if high_severity_alerts:
+            try:
+                alert_email = os.environ.get("ALERT_EMAIL")
+                if alert_email:
+                    # Build email content for HIGH severity alerts
+                    subject = f"🚨 HIGH SEVERITY Alert - Server {payload.host}"
+                    alert_messages = [f"[{alert['container']}] {alert['message']}" for alert in high_severity_alerts]
+                    content = format_alert_email_content(
+                        host=payload.host,
+                        server_id=payload.server_id,
+                        env=payload.env,
+                        alerts=alert_messages,
+                        score=payload.score
+                    )
+                    
+                    # Send the alert email
+                    send_alert_email(subject, content, alert_email)
+                    logger.info(f"HIGH severity alert email sent to {alert_email} for {len(high_severity_alerts)} alerts")
+                else:
+                    logger.warning("ALERT_EMAIL environment variable not set, skipping HIGH severity email notification")
+            except Exception as e:
+                logger.error(f"Failed to send HIGH severity alert email: {str(e)}")
+        
         # Check if email alert should be sent
         if should_send_email(payload.local_alerts):
             try:
@@ -190,6 +238,27 @@ async def ingest_monitoring_data(
         raise HTTPException(status_code=500, detail=f"Error processing monitoring data: {str(e)}")
 
 
+@app.get("/alerts")
+async def get_current_alerts() -> Dict[str, Any]:
+    """
+    Get current alerts from the rules engine.
+    
+    Returns:
+        JSON response with current alerts list
+    """
+    try:
+        alerts = get_alerts()
+        return {
+            "status": "success",
+            "count": len(alerts),
+            "alerts": alerts,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error retrieving alerts: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving alerts: {str(e)}")
+
+
 @app.get("/healthz")
 async def health_check() -> Dict[str, str]:
     """
@@ -218,6 +287,7 @@ async def root() -> Dict[str, str]:
         "version": "1.0.0",
         "endpoints": {
             "ingest": "POST /ingest - Receive monitoring data",
+            "alerts": "GET /alerts - Get current alerts",
             "health": "GET /healthz - Health check"
         }
     }
