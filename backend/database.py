@@ -85,7 +85,7 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
             # Log the database error for debugging
             import logging
             logger = logging.getLogger("monitoring-backend")
-            logger.error(f"Database session error: {e}", exc_info=True)
+            logger.error(f"Database session error: {e}")
             raise
         finally:
             await session.close()

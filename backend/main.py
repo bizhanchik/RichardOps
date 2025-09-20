@@ -136,12 +136,16 @@ def verify_hmac_signature(signature: str, timestamp: str, body: bytes) -> None:
     if not SECRET:
         raise HTTPException(status_code=500, detail="Server configuration error")
     
-    # Check timestamp freshness (within 120 seconds)
+    # Check timestamp freshness (within 300 seconds for production stability)
     try:
         ts_int = int(timestamp)
-        if abs(time.time() - ts_int) > 120:
+        current_time = time.time()
+        time_diff = abs(current_time - ts_int)
+        if time_diff > 300:  # Increased from 120 to 300 seconds for production stability
+            logger.warning(f"Stale timestamp detected: {time_diff}s difference (current: {current_time}, provided: {ts_int})")
             raise HTTPException(status_code=400, detail="Request timestamp is stale")
-    except ValueError:
+    except ValueError as e:
+        logger.warning(f"Invalid timestamp format: {timestamp} - {str(e)}")
         raise HTTPException(status_code=400, detail="Invalid timestamp format")
     
     # Compute expected HMAC signature
@@ -173,7 +177,7 @@ async def ingest_monitoring_data(
         Success message with timestamp
     """
     try:
-        # Fixed: Verify HMAC signature and timestamp before processing
+        # Verify HMAC signature and timestamp before processing
         raw_body = await request.body()
         verify_hmac_signature(x_agent_signature, x_agent_timestamp, raw_body)
         
@@ -430,6 +434,9 @@ async def ingest_monitoring_data(
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
+    except HTTPException:
+        # Re-raise HTTPExceptions (like authentication errors) without modification
+        raise
     except Exception as e:
         logger.error(f"Error processing monitoring data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing monitoring data: {str(e)}")
