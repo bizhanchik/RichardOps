@@ -31,6 +31,7 @@ from db_models import (
 from routes import router as api_router
 from routes_nlp import router as nlp_basic_router
 from api.nlp_endpoints import nlp_router
+from routes.logs_api import router as logs_api_router
 
 # Create logs directory if it doesn't exist
 logs_dir = Path("logs")
@@ -84,12 +85,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API routes
+# Include routers
 app.include_router(api_router)
 
-# Include NLP routes
+# Include NLP routers
 app.include_router(nlp_basic_router)  # Basic NLP endpoints (/nlp/test, /nlp/process)
 app.include_router(nlp_router)        # Advanced NLP query system (/api/nlp/*)
+
+# Include logs API router
+app.include_router(logs_api_router)   # OpenSearch log search and analytics (/api/logs/*)
 
 
 @app.exception_handler(Exception)
