@@ -1,6 +1,8 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const Hero: React.FC = () => {
+  const navigate = useNavigate();
   return (
     <section className="pt-6 pb-8 px-6">
       <div className="max-w-4xl mx-auto text-center">
@@ -18,7 +20,10 @@ const Hero: React.FC = () => {
 
         {/* CTA Button */}
         <div className="mb-6">
-          <button className="bg-emerald-600 text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-emerald-700 transition-colors shadow-lg hover:shadow-xl">
+          <button 
+            onClick={() => navigate('/solution')}
+            className="bg-emerald-600 text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-emerald-700 transition-colors shadow-lg hover:shadow-xl"
+          >
             Explore Solution
           </button>
         </div>

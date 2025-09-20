@@ -7,6 +7,8 @@
 *.dll
 *.so
 *.dylib
+__pycache__/
+secret.txt
 
 # Test binary, built with `go test -c`
 *.test
@@ -65,3 +67,7 @@ go.work.sum
 # .idea/
 # .vscode/
 venv
+
+.json
+
+.log
