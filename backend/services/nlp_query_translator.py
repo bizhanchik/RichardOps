@@ -297,11 +297,13 @@ class QueryTranslator:
         if hasattr(model, 'type') and "event_type" in filters:
             query = query.filter(model.type.ilike(f"%{filters['event_type']}%"))
         
-        # Add text search for general queries
+        # Add text search for specific queries only (not general "show all logs" type queries)
         search_terms = self._extract_search_terms(parsed_query.original_query)
-        if search_terms and hasattr(model, 'message'):
+        meaningful_search_terms = self._filter_meaningful_search_terms(search_terms, parsed_query.original_query)
+        
+        if meaningful_search_terms and hasattr(model, 'message'):
             search_conditions = []
-            for term in search_terms:
+            for term in meaningful_search_terms:
                 search_conditions.append(model.message.ilike(f"%{term}%"))
             if search_conditions:
                 query = query.filter(or_(*search_conditions))
@@ -339,6 +341,29 @@ class QueryTranslator:
         search_terms = [term for term in search_terms if term not in time_words]
         
         return search_terms[:5]  # Limit to 5 terms
+    
+    def _filter_meaningful_search_terms(self, search_terms: List[str], original_query: str) -> List[str]:
+        """Filter out generic log-related terms that shouldn't trigger text search."""
+        # Generic terms that indicate "show all" rather than specific search
+        generic_terms = {
+            "logs", "log", "entries", "entry", "events", "event", "data", "records", 
+            "record", "messages", "message", "items", "item", "everything", "every",
+            "container", "containers", "docker", "system"
+        }
+        
+        # If the query contains words like "all", "every", "everything" and only generic terms,
+        # it's likely a "show all" query rather than a specific search
+        query_lower = original_query.lower()
+        has_show_all_intent = any(word in query_lower for word in ["all", "every", "everything"])
+        
+        # Filter out generic terms
+        meaningful_terms = [term for term in search_terms if term not in generic_terms]
+        
+        # If we have show-all intent and only generic terms remain, return empty list
+        if has_show_all_intent and not meaningful_terms:
+            return []
+        
+        return meaningful_terms
     
     def _serialize_result(self, result) -> Dict[str, Any]:
         """Serialize a database result to a dictionary."""
