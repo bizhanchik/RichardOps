@@ -28,6 +28,7 @@ from db_models import (
     MetricsModel, DockerEventsModel, ContainerLogsModel, 
     AlertsModel, EmailNotificationsModel
 )
+from routes import router as api_router
 
 # Create logs directory if it doesn't exist
 logs_dir = Path("logs")
@@ -80,6 +81,9 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+# Include API routes
+app.include_router(api_router)
 
 
 @app.exception_handler(Exception)
@@ -609,159 +613,29 @@ async def root() -> Dict[str, str]:
     }
 
 
-@app.get("/metrics/recent")
-async def get_recent_metrics(
-    limit: int = Query(default=100, le=1000),
-    db: AsyncSession = Depends(get_db_session)
-) -> Dict[str, Any]:
+@app.get("/")
+async def root() -> Dict[str, str]:
     """
-    Get recent system metrics from the database.
+    Root endpoint providing basic API information.
     
-    Args:
-        limit: Maximum number of metrics records to return (max 1000)
-        
     Returns:
-        JSON response with recent metrics data
+        JSON response with API information
     """
-    try:
-        metrics_query = select(MetricsModel).order_by(desc(MetricsModel.timestamp)).limit(limit)
-        result = await db.execute(metrics_query)
-        metrics = result.scalars().all()
-        
-        metrics_data = []
-        for metric in metrics:
-            metrics_data.append({
-                "id": metric.id,
-                "timestamp": metric.timestamp.isoformat(),
-                "cpu_usage": metric.cpu_usage,
-                "memory_usage": metric.memory_usage,
-                "disk_usage": metric.disk_usage,
-                "network_rx": metric.network_rx,
-                "network_tx": metric.network_tx,
-                "tcp_connections": metric.tcp_connections
-            })
-        
-        return {
-            "status": "success",
-            "metrics": metrics_data,
-            "count": len(metrics_data),
-            "timestamp": datetime.now(timezone.utc).isoformat()
+    return {
+        "message": "Monitoring Backend API",
+        "version": "1.0.0",
+        "status": "running",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "endpoints": {
+            "health": "/healthz",
+            "readiness": "/readiness", 
+            "ingest": "/ingest",
+            "alerts": "/alerts",
+            "metrics_recent": "/metrics/recent",
+            "metrics_range": "/metrics/range",
+            "events_recent": "/events/recent",
+            "logs_search": "/logs/search"
         }
-        
-    except Exception as e:
-        logger.error(f"Error retrieving metrics: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error retrieving metrics: {str(e)}")
-
-
-@app.get("/logs/search")
-async def search_logs(
-    query: str = Query(..., description="Search query for log messages"),
-    container: Optional[str] = Query(default=None, description="Filter by container name"),
-    limit: int = Query(default=100, le=1000),
-    db: AsyncSession = Depends(get_db_session)
-) -> Dict[str, Any]:
-    """
-    Search container logs in the database.
-    
-    Args:
-        query: Search query string
-        container: Optional container name filter
-        limit: Maximum number of log entries to return (max 1000)
-        
-    Returns:
-        JSON response with matching log entries
-    """
-    try:
-        # Build the query
-        logs_query = select(ContainerLogsModel)
-        
-        # Add text search condition
-        logs_query = logs_query.where(ContainerLogsModel.message.ilike(f"%{query}%"))
-        
-        # Add container filter if provided
-        if container:
-            logs_query = logs_query.where(ContainerLogsModel.container == container)
-        
-        # Order by timestamp descending and limit
-        logs_query = logs_query.order_by(desc(ContainerLogsModel.timestamp)).limit(limit)
-        
-        result = await db.execute(logs_query)
-        logs = result.scalars().all()
-        
-        logs_data = []
-        for log in logs:
-            logs_data.append({
-                "id": log.id,
-                "container": log.container,
-                "timestamp": log.timestamp.isoformat(),
-                "message": log.message
-            })
-        
-        return {
-            "status": "success",
-            "logs": logs_data,
-            "count": len(logs_data),
-            "query": query,
-            "container_filter": container,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error searching logs: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error searching logs: {str(e)}")
-
-
-@app.get("/events/recent")
-async def get_recent_events(
-    limit: int = Query(default=100, le=1000),
-    event_type: Optional[str] = Query(default=None, description="Filter by event type"),
-    db: AsyncSession = Depends(get_db_session)
-) -> Dict[str, Any]:
-    """
-    Get recent Docker events from the database.
-    
-    Args:
-        limit: Maximum number of events to return (max 1000)
-        event_type: Optional event type filter
-        
-    Returns:
-        JSON response with recent Docker events
-    """
-    try:
-        events_query = select(DockerEventsModel)
-        
-        # Add event type filter if provided
-        if event_type:
-            events_query = events_query.where(DockerEventsModel.type == event_type)
-        
-        # Order by timestamp descending and limit
-        events_query = events_query.order_by(desc(DockerEventsModel.timestamp)).limit(limit)
-        
-        result = await db.execute(events_query)
-        events = result.scalars().all()
-        
-        events_data = []
-        for event in events:
-            events_data.append({
-                "id": event.id,
-                "timestamp": event.timestamp.isoformat(),
-                "type": event.type,
-                "action": event.action,
-                "container": event.container,
-                "image": event.image
-            })
-        
-        return {
-            "status": "success",
-            "events": events_data,
-            "count": len(events_data),
-            "event_type_filter": event_type,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error retrieving events: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error retrieving events: {str(e)}")
 
 
 if __name__ == "__main__":
