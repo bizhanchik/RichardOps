@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from services.nlp_query_parser import parse_natural_query, ParsedQuery, QueryIntent
 from services.nlp_query_translator import get_query_translator
-from database import get_db_session
+from database import get_sync_db_session
 
 
 class NLPQuerySystem:
@@ -47,7 +47,7 @@ class NLPQuerySystem:
             parsed_query = parse_natural_query(query)
             
             # Get database session
-            db_session = get_db_session()
+            db_session = get_sync_db_session()
             
             try:
                 # Translate and execute the query
@@ -109,7 +109,7 @@ class NLPQuerySystem:
     def get_system_status(self) -> Dict[str, Any]:
         """Get the status of the NLP query system."""
         try:
-            db_session = get_db_session()
+            db_session = get_sync_db_session()
             
             try:
                 # Test database connectivity
