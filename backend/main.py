@@ -138,11 +138,26 @@ def verify_hmac_signature(signature: str, timestamp: str, body: bytes) -> None:
     if not SECRET:
         raise HTTPException(status_code=500, detail="Server configuration error")
     
-    # Check timestamp freshness (within 120 seconds)
+    # Get configurable timestamp window (default 300 seconds = 5 minutes for production)
+    timestamp_window = int(os.environ.get("HMAC_TIMESTAMP_WINDOW", "300"))
+    
+    # Check timestamp freshness
     try:
         ts_int = int(timestamp)
-        if abs(time.time() - ts_int) > 120:
-            raise HTTPException(status_code=400, detail="Request timestamp is stale")
+        current_time = time.time()
+        time_diff = abs(current_time - ts_int)
+        
+        if time_diff > timestamp_window:
+            logger.warning(f"Request timestamp is stale: time_diff={time_diff}s, window={timestamp_window}s, client_time={ts_int}, server_time={current_time}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Request timestamp is stale (diff: {time_diff}s, max: {timestamp_window}s)"
+            )
+        
+        # Log clock drift warnings for monitoring
+        if time_diff > 60:  # Warn if more than 1 minute difference
+            logger.warning(f"Clock drift detected: {time_diff}s difference between client and server")
+            
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid timestamp format")
     

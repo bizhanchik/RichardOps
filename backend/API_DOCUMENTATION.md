@@ -24,6 +24,7 @@ Most endpoints require HMAC signature authentication for security:
 - **Header:** `X-Agent-Signature`
 - **Header:** `X-Agent-Timestamp`
 - **Secret:** Set via `INGEST_SECRET` environment variable
+- **Timestamp Window:** Configurable via `HMAC_TIMESTAMP_WINDOW` environment variable (default: 300 seconds)
 
 ---
 
