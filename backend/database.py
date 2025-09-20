@@ -81,12 +81,8 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
         try:
             yield session
             await session.commit()
-        except Exception as e:
+        except Exception:
             await session.rollback()
-            # Log the database error for debugging
-            import logging
-            logger = logging.getLogger("monitoring-backend")
-            logger.error(f"Database session error: {e}", exc_info=True)
             raise
         finally:
             await session.close()
