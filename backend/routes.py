@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from database import get_db_session
 from db_models import (
-    MetricsModel, DockerEventsModel
+    MetricsModel, DockerEventsModel, ContainerLogsModel, AlertsModel
 )
 
 # Pydantic response models
@@ -27,9 +27,20 @@ class DockerEventResponse(BaseModel):
     container: Optional[str]
     image: Optional[str]
 
+class LogEntryResponse(BaseModel):
+    id: int
+    timestamp: str
+    container: Optional[str]
+    message: Optional[str]
 
-
-
+class AlertResponse(BaseModel):
+    id: int
+    timestamp: str
+    severity: str
+    type: Optional[str]
+    message: Optional[str]
+    score: Optional[float]
+    resolved: bool
 
 # Create router
 router = APIRouter()
@@ -151,3 +162,111 @@ async def get_recent_events(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving events: {str(e)}")
+
+@router.get("/logs/search", response_model=List[LogEntryResponse])
+async def search_logs(
+    q: str = Query(..., description="Search query for log messages"),
+    limit: int = Query(default=50, le=1000, description="Number of results to return"),
+    db: AsyncSession = Depends(get_db_session)
+) -> List[LogEntryResponse]:
+    """
+    GET /logs/search?q=error&limit=50
+    Performs case-insensitive LIKE search in container_logs.message.
+    Return last N results ordered by timestamp descending.
+    """
+    try:
+        # Build query with case-insensitive search
+        query = select(ContainerLogsModel).where(
+            ContainerLogsModel.message.ilike(f"%{q}%")
+        ).order_by(desc(ContainerLogsModel.timestamp)).limit(limit)
+        
+        result = await db.execute(query)
+        logs = result.scalars().all()
+        
+        # Convert to response models
+        logs_list = []
+        for log in logs:
+            logs_list.append(LogEntryResponse(
+                id=log.id,
+                timestamp=log.timestamp.isoformat(),
+                container=log.container,
+                message=log.message
+            ))
+        
+        return logs_list
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error searching logs: {str(e)}")
+
+@router.get("/logs/recent", response_model=List[LogEntryResponse])
+async def get_recent_logs(
+    limit: int = Query(default=50, le=500, description="Number of recent log entries to return"),
+    container: Optional[str] = Query(default=None, description="Filter logs by container name"),
+    db: AsyncSession = Depends(get_db_session)
+) -> List[LogEntryResponse]:
+    """
+    GET /logs/recent?limit=50&container=web-server
+    Returns recent log entries ordered by timestamp descending.
+    Optionally filter by container name.
+    """
+    try:
+        # Build base query
+        query = select(ContainerLogsModel)
+        
+        # Apply container filter if provided
+        if container:
+            query = query.where(ContainerLogsModel.container == container)
+        
+        # Order by timestamp descending and apply limit
+        query = query.order_by(desc(ContainerLogsModel.timestamp)).limit(limit)
+        
+        result = await db.execute(query)
+        logs = result.scalars().all()
+        
+        # Convert to response models
+        logs_list = []
+        for log in logs:
+            logs_list.append(LogEntryResponse(
+                id=log.id,
+                timestamp=log.timestamp.isoformat(),
+                container=log.container,
+                message=log.message
+            ))
+        
+        return logs_list
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving recent logs: {str(e)}")
+
+@router.get("/alerts", response_model=List[AlertResponse])
+async def get_alerts(
+    limit: int = Query(default=50, le=1000, description="Number of alerts to return"),
+    db: AsyncSession = Depends(get_db_session)
+) -> List[AlertResponse]:
+    """
+    Returns all alerts (default 50), ordered by timestamp descending.
+    Each alert includes: id, timestamp, severity, type, message, score, resolved.
+    """
+    try:
+        # Query alerts ordered by timestamp descending
+        query = select(AlertsModel).order_by(desc(AlertsModel.timestamp)).limit(limit)
+        result = await db.execute(query)
+        alerts = result.scalars().all()
+        
+        # Convert to response models
+        alerts_list = []
+        for alert in alerts:
+            alerts_list.append(AlertResponse(
+                id=alert.id,
+                timestamp=alert.timestamp.isoformat(),
+                severity=alert.severity,
+                type=alert.type,
+                message=alert.message,
+                score=float(alert.score) if alert.score is not None else None,
+                resolved=alert.resolved
+            ))
+        
+        return alerts_list
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving alerts: {str(e)}")

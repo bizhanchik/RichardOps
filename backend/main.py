@@ -28,14 +28,7 @@ from db_models import (
     MetricsModel, DockerEventsModel, ContainerLogsModel, 
     AlertsModel, EmailNotificationsModel
 )
-import routes as routes_module
-from routes_nlp import router as nlp_basic_router
-from api.nlp_endpoints import nlp_router
-from logs_api import router as logs_api_router
-from routers.containers import router as containers_router
-from services.opensearch_client import initialize_opensearch, cleanup_opensearch
-
-api_router = routes_module.router
+from routes import router as api_router
 
 # Create logs directory if it doesn't exist
 logs_dir = Path("logs")
@@ -89,16 +82,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
+# Include API routes
 app.include_router(api_router)
-
-# Include NLP routers
-app.include_router(nlp_basic_router)  # Basic NLP endpoints (/nlp/test, /nlp/process)
-app.include_router(nlp_router)        # Advanced NLP query system (/api/nlp/*)
-
-# Include specialized routers
-app.include_router(logs_api_router)   # OpenSearch log search and analytics (/api/logs/*)
-app.include_router(containers_router) # Container status and events (/containers)
 
 
 @app.exception_handler(Exception)
@@ -117,29 +102,18 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database and OpenSearch on application startup."""
+    """Initialize database on application startup."""
     logger.info("Initializing database...")
     await init_db()
     logger.info("Database initialized successfully")
-    
-    logger.info("Initializing OpenSearch...")
-    opensearch_initialized = initialize_opensearch()
-    if opensearch_initialized:
-        logger.info("OpenSearch initialized successfully")
-    else:
-        logger.warning("OpenSearch initialization failed - running in fallback mode")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Clean up database and OpenSearch connections on application shutdown."""
+    """Clean up database connections on application shutdown."""
     logger.info("Closing database connections...")
     await close_db()
     logger.info("Database connections closed")
-    
-    logger.info("Cleaning up OpenSearch connections...")
-    cleanup_opensearch()
-    logger.info("OpenSearch connections cleaned up")
 
 
 # Fixed: HMAC signature and timestamp verification function
@@ -158,47 +132,11 @@ def verify_hmac_signature(signature: str, timestamp: str, body: bytes) -> None:
     if not SECRET:
         raise HTTPException(status_code=500, detail="Server configuration error")
     
-    # Get configurable timestamp window (default 300 seconds = 5 minutes for production)
-    timestamp_window = int(os.environ.get("HMAC_TIMESTAMP_WINDOW", "300"))
-    
-    # Check timestamp freshness
+    # Check timestamp freshness (within 120 seconds)
     try:
         ts_int = int(timestamp)
-        current_time = time.time()
-        time_diff = abs(current_time - ts_int)
-        
-        # Enhanced logging for clock synchronization monitoring
-        from datetime import datetime, timezone
-        client_dt = datetime.fromtimestamp(ts_int, tz=timezone.utc)
-        server_dt = datetime.fromtimestamp(current_time, tz=timezone.utc)
-        
-        # Log all timestamp checks for monitoring (can be filtered in production)
-        logger.debug(f"Timestamp check: client={client_dt.isoformat()}, server={server_dt.isoformat()}, diff={time_diff:.2f}s, window={timestamp_window}s")
-        
-        if time_diff > timestamp_window:
-            # Enhanced error logging for troubleshooting
-            logger.error(f"TIMESTAMP_STALE: time_diff={time_diff:.2f}s > window={timestamp_window}s")
-            logger.error(f"  Client time: {client_dt.isoformat()} (Unix: {ts_int})")
-            logger.error(f"  Server time: {server_dt.isoformat()} (Unix: {current_time:.2f})")
-            logger.error(f"  Time behind: {(current_time - ts_int):.2f}s ({'client behind' if current_time > ts_int else 'server behind'})")
-            
-            # Check if this is the massive clock sync issue
-            if time_diff > 3600:  # More than 1 hour
-                logger.critical(f"MASSIVE_CLOCK_DRIFT: {time_diff/3600:.1f} hours difference - immediate clock sync required!")
-            
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Request timestamp is stale (diff: {time_diff:.2f}s, max: {timestamp_window}s)"
-            )
-        
-        # Enhanced clock drift warnings with severity levels
-        if time_diff > 300:  # 5+ minutes
-            logger.warning(f"SEVERE_CLOCK_DRIFT: {time_diff:.2f}s difference - clock sync recommended")
-        elif time_diff > 60:  # 1+ minute
-            logger.warning(f"MODERATE_CLOCK_DRIFT: {time_diff:.2f}s difference - monitor clock sync")
-        elif time_diff > 10:  # 10+ seconds
-            logger.info(f"MINOR_CLOCK_DRIFT: {time_diff:.2f}s difference - within acceptable range")
-            
+        if abs(time.time() - ts_int) > 120:
+            raise HTTPException(status_code=400, detail="Request timestamp is stale")
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid timestamp format")
     
@@ -675,7 +613,30 @@ async def root() -> Dict[str, str]:
     }
 
 
-
+@app.get("/")
+async def root() -> Dict[str, str]:
+    """
+    Root endpoint providing basic API information.
+    
+    Returns:
+        JSON response with API information
+    """
+    return {
+        "message": "Monitoring Backend API",
+        "version": "1.0.0",
+        "status": "running",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "endpoints": {
+            "health": "/healthz",
+            "readiness": "/readiness", 
+            "ingest": "/ingest",
+            "alerts": "/alerts",
+            "metrics_recent": "/metrics/recent",
+            "metrics_range": "/metrics/range",
+            "events_recent": "/events/recent",
+            "logs_search": "/logs/search"
+        }
+    }
 
 
 if __name__ == "__main__":
