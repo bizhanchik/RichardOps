@@ -30,7 +30,6 @@ from db_models import (
 )
 from routes import router as api_router
 from api.nlp_endpoints import nlp_router
-from logs_api import router as logs_router
 
 # Create logs directory if it doesn't exist
 logs_dir = Path("logs")
@@ -91,7 +90,6 @@ app.add_middleware(
 # Include API routes
 app.include_router(api_router)
 app.include_router(nlp_router)
-app.include_router(logs_router)
 
 
 @app.exception_handler(Exception)

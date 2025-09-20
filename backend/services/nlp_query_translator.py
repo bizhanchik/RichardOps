@@ -1,8 +1,8 @@
 """
 NLP Query Translator for converting parsed natural language queries into database queries.
 
-This module translates structured NLP queries into SQL queries, OpenSearch queries,
-and other data source queries for security monitoring and log analysis.
+This module translates structured NLP queries into SQL queries and other data source 
+queries for security monitoring and log analysis.
 """
 
 from datetime import datetime, timedelta
@@ -21,8 +21,8 @@ class QueryTranslator:
     """
     Translates parsed NLP queries into database queries for various data sources.
     
-    Supports SQL queries for PostgreSQL, OpenSearch queries for log analysis,
-    and aggregation queries for reporting and analytics.
+    Supports SQL queries for PostgreSQL and aggregation queries for reporting 
+    and analytics.
     """
     
     def __init__(self):
