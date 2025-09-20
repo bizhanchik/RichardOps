@@ -35,8 +35,8 @@ class DockerEventsModel(Base):
     
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
-    type = Column(String(50))
-    action = Column(String(50))
+    type = Column(String(255))
+    action = Column(Text)
     container = Column(String(255))
     image = Column(String(255))
     
