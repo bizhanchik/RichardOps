@@ -35,13 +35,12 @@ def send_alert_email(subject: str, content: str, to_email: str) -> None:
         "api-key": api_key,
         "content-type": "application/json"
     }
-    sender_email = os.environ.get("ALERT_SENDER_EMAIL")
-
+    
     # Email payload
     payload = {
         "sender": {
             "name": "Monitoring Bot",
-            "email": sender_email
+            "email": "noreply@yourdomain.com"
         },
         "to": [
             {

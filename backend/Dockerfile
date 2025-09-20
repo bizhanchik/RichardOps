@@ -24,12 +24,14 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . .
 
-# Create logs directory
-RUN mkdir -p logs
-
 # Create non-root user for security
-RUN useradd --create-home --shell /bin/bash app && \
+RUN useradd --create-home --shell /bin/bash app
+
+# Create logs directory with proper ownership
+RUN mkdir -p /app/logs && \
     chown -R app:app /app
+
+# Switch to non-root user
 USER app
 
 # Expose port
