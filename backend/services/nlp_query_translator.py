@@ -237,7 +237,7 @@ class QueryTranslator:
             return {
                 "success": False,
                 "error": f"Failed to fetch latest logs: {str(e)}",
-                "data": {"logs": [], "count": 0}
+                "data": {"logs": [], "count": 0, "total_count": 0}
             }
     
     def fetch_logs_last_hour(self, db_session: Session, limit: int = 1000, offset: int = 0) -> Dict[str, Any]:
@@ -295,7 +295,7 @@ class QueryTranslator:
             return {
                 "success": False,
                 "error": f"Failed to fetch logs from last hour: {str(e)}",
-                "data": {"logs": [], "count": 0}
+                "data": {"logs": [], "count": 0, "total_count": 0}
             }
     
     def translate_query(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
@@ -346,36 +346,89 @@ class QueryTranslator:
                 "logs in the last hour", "logs in the past hour"
             ]
             
+            # Check for container-specific patterns
+            container_patterns = [
+                "container logs", "logs from container", "logs for container",
+                "show container", "get container", "display container",
+                "container logs for", "logs from container", "container"
+            ]
+            
             # Handle time-based queries
             if any(pattern in original_query for pattern in latest_patterns):
                 result = self.fetch_latest_logs(db_session, limit=50)
-                return {
-                    "intent": "search_logs",
-                    "results": result["data"]["logs"],
-                    "count": result["data"]["total_count"],
-                    "data_source": "postgresql",
-                    "query_info": {
-                        "query_type": "latest_logs",
-                        "limit": 50,
-                        "confidence": 1.0,
-                        "table_queried": "container_logs"
+                if result.get("success", False):
+                    return {
+                        "intent": "search_logs",
+                        "results": result["data"]["logs"],
+                        "count": result["data"]["total_count"],
+                        "data_source": "postgresql",
+                        "query_info": {
+                            "query_type": "latest_logs",
+                            "limit": 50,
+                            "confidence": 1.0,
+                            "table_queried": "container_logs"
+                        }
                     }
-                }
+                else:
+                    return {
+                        "intent": "search_logs",
+                        "error": f"Failed to fetch latest logs: {result.get('error', 'Unknown error')}",
+                        "results": [],
+                        "count": 0,
+                        "fallback_attempted": True
+                    }
             
             if any(pattern in original_query for pattern in last_hour_patterns):
                 result = self.fetch_logs_last_hour(db_session, limit=1000)
-                return {
-                    "intent": "search_logs",
-                    "results": result["data"]["logs"],
-                    "count": result["data"]["total_count"],
-                    "data_source": "postgresql",
-                    "query_info": {
-                        "query_type": "logs_last_hour",
-                        "time_filter": result["data"]["time_filter"],
-                        "confidence": 1.0,
-                        "table_queried": "container_logs"
+                if result.get("success", False):
+                    return {
+                        "intent": "search_logs",
+                        "results": result["data"]["logs"],
+                        "count": result["data"]["total_count"],
+                        "data_source": "postgresql",
+                        "query_info": {
+                            "query_type": "logs_last_hour",
+                            "time_filter": result["data"]["time_filter"],
+                            "confidence": 1.0,
+                            "table_queried": "container_logs"
+                        }
                     }
-                }
+                else:
+                    return {
+                        "intent": "search_logs",
+                        "error": f"Failed to fetch last hour logs: {result.get('error', 'Unknown error')}",
+                        "results": [],
+                        "count": 0,
+                        "fallback_attempted": True
+                    }
+            
+            # Handle container-specific queries with direct routing
+            if any(pattern in original_query for pattern in container_patterns):
+                # Extract container name from the query
+                container_name = self._extract_container_name_from_query(original_query)
+                if container_name:
+                    result = self.fetch_logs_by_container(db_session, container_name, limit=100)
+                    if result.get("success", False):
+                        return {
+                            "intent": "search_logs",
+                            "results": result["data"]["logs"],
+                            "count": result["data"]["total_count"],
+                            "data_source": "postgresql",
+                            "query_info": {
+                                "query_type": "container_logs",
+                                "container": container_name,
+                                "confidence": 0.9,
+                                "table_queried": "container_logs"
+                            }
+                        }
+                    else:
+                        return {
+                            "intent": "search_logs",
+                            "error": f"Failed to fetch container logs: {result.get('error', 'Unknown error')}",
+                            "results": [],
+                            "count": 0,
+                            "fallback_attempted": True
+                        }
             
             # Check if this is a simple "show all logs" type query
             show_all_patterns = [
@@ -385,14 +438,14 @@ class QueryTranslator:
             ]
             
             # Check for specific entity filters
-            has_container_filter = any(entity.entity_type == EntityType.CONTAINER for entity in parsed_query.entities)
-            has_level_filter = any(entity.entity_type == EntityType.LOG_LEVEL for entity in parsed_query.entities)
+            has_container_filter = any(entity.type == EntityType.CONTAINER_NAME for entity in parsed_query.entities)
+            has_level_filter = any(entity.type == EntityType.LOG_LEVEL for entity in parsed_query.entities)
             
             # Use simple functions for common queries
             if any(pattern in original_query for pattern in show_all_patterns):
                 if has_container_filter:
                     # Get container name from entities
-                    container_entity = next((entity for entity in parsed_query.entities if entity.entity_type == EntityType.CONTAINER), None)
+                    container_entity = next((entity for entity in parsed_query.entities if entity.type == EntityType.CONTAINER_NAME), None)
                     if container_entity:
                         result = self.fetch_logs_by_container(db_session, container_entity.value, limit=100)
                         return {
@@ -409,7 +462,7 @@ class QueryTranslator:
                         }
                 elif has_level_filter:
                     # Get level from entities and search in message content
-                    level_entity = next((entity for entity in parsed_query.entities if entity.entity_type == EntityType.LOG_LEVEL), None)
+                    level_entity = next((entity for entity in parsed_query.entities if entity.type == EntityType.LOG_LEVEL), None)
                     if level_entity:
                         result = self.fetch_logs_by_message_pattern(db_session, level_entity.value, limit=100)
                         return {
@@ -493,7 +546,7 @@ class QueryTranslator:
             query = db_session.query(AlertsModel)
             
             # Apply severity filter
-            severity_entities = [e for e in parsed_query.entities if e.entity_type == EntityType.SEVERITY]
+            severity_entities = [e for e in parsed_query.entities if e.type == EntityType.SEVERITY]
             if severity_entities:
                 severities = [e.value.upper() for e in severity_entities]
                 query = query.filter(AlertsModel.severity.in_(severities))
@@ -1157,7 +1210,37 @@ class QueryTranslator:
             "trend": "stable"
         }
     
-
+    def _extract_container_name_from_query(self, query: str) -> Optional[str]:
+        """
+        Extract container name from natural language query.
+        
+        Args:
+            query: The natural language query string
+            
+        Returns:
+            Container name if found, None otherwise
+        """
+        import re
+        
+        # Common patterns for container names in queries
+        patterns = [
+            r'container\s+([a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9])',  # "container webapp"
+            r'from\s+container\s+([a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9])',  # "from container webapp"
+            r'for\s+container\s+([a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9])',  # "for container webapp"
+            r'([a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9])\s+container',  # "webapp container"
+            r'logs\s+([a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9])',  # "logs webapp"
+            r'show\s+([a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9])',  # "show webapp"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                container_name = match.group(1)
+                # Filter out common words that aren't container names
+                if container_name.lower() not in ['logs', 'all', 'recent', 'latest', 'show', 'get', 'display', 'from', 'for', 'the', 'a', 'an']:
+                    return container_name
+        
+        return None
 
     def _get_query_suggestions(self) -> List[str]:
         """Get query suggestions for unsupported intents."""
