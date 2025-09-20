@@ -13,6 +13,8 @@ from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.responses import JSONResponse
 
 from models import Payload
+from services.alerts import should_send_email, get_alert_severity, format_alert_summary
+from services.email import send_alert_email, format_alert_email_content
 
 # Create logs directory if it doesn't exist
 logs_dir = Path("logs")
@@ -152,6 +154,30 @@ async def ingest_monitoring_data(
         }
         
         logger.info(f"Monitoring data received from {payload.host}: {json.dumps(log_entry, indent=2, default=json_serializer)}")
+        
+        # Check if email alert should be sent
+        if should_send_email(payload.local_alerts):
+            try:
+                # Get recipient email from environment variable
+                alert_email = os.environ.get("ALERT_EMAIL")
+                if alert_email:
+                    # Build email content
+                    subject = f"🚨 Server {payload.host} Alert"
+                    content = format_alert_email_content(
+                        host=payload.host,
+                        server_id=payload.server_id,
+                        env=payload.env,
+                        alerts=payload.local_alerts,
+                        score=payload.score
+                    )
+                    
+                    # Send the alert email
+                    send_alert_email(subject, content, alert_email)
+                    logger.info(f"Alert email sent to {alert_email} for {payload.host}")
+                else:
+                    logger.warning("ALERT_EMAIL environment variable not set, skipping email notification")
+            except Exception as e:
+                logger.error(f"Failed to send alert email: {str(e)}")
         
         return {
             "status": "success",
