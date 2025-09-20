@@ -1163,7 +1163,7 @@ func parseConfig() Config {
 
 	flag.StringVar(&config.ServerURL, "server-url", "http://localhost:8000/ingest", "Server URL for sending payloads")
 	flag.StringVar(&config.Secret, "secret", "", "Shared secret for HMAC signing")
-	flag.IntVar(&config.Interval, "interval", 30, "Interval in seconds between payload sends")
+	flag.IntVar(&config.Interval, "interval", 10, "Interval in seconds between payload sends")
 	flag.IntVar(&config.TailLines, "tail-lines", 100, "Number of initial log lines to tail")
 	flag.IntVar(&config.AuthWindowSeconds, "auth-window-seconds", 300, "Window for auth failure detection")
 	flag.Float64Var(&config.CPUSpikePct, "cpu-spike-pct", 85.0, "CPU percentage threshold for spike detection")
