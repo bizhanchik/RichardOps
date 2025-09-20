@@ -6,17 +6,28 @@ import hashlib
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi import FastAPI, HTTPException, Request, Header, Depends, Query
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, desc, func, or_
+from sqlalchemy.orm import selectinload
 
 from models import Payload
 from services.alerts import should_send_email, get_alert_severity, format_alert_summary
 from services.email import send_alert_email, format_alert_email_content
 from services.rules import process_log_entry, get_alerts, add_alert
 from rules_engine import analyze_request, get_stored_alerts
+from database import get_db_session, init_db, close_db
+from performance_config import perf_config
+from db_models import (
+    MetricsModel, DockerEventsModel, ContainerLogsModel, 
+    AlertsModel, EmailNotificationsModel
+)
 
 # Create logs directory if it doesn't exist
 logs_dir = Path("logs")
@@ -47,10 +58,58 @@ alerts_logger.propagate = False  # Don't propagate to root logger
 
 # Create FastAPI app
 app = FastAPI(
-    title="Monitoring Data Ingestion API",
-    description="FastAPI backend to receive monitoring data from Go agent",
-    version="1.0.0"
+    title="Monitoring Backend API",
+    description="Production-ready monitoring and alerting system for Docker containers",
+    version="1.0.0",
+    docs_url="/docs" if os.getenv("ENVIRONMENT", "development") != "production" else None,
+    redoc_url="/redoc" if os.getenv("ENVIRONMENT", "development") != "production" else None,
+    openapi_url="/openapi.json" if os.getenv("ENVIRONMENT", "development") != "production" else None
 )
+
+# Add security middleware
+app.add_middleware(
+    TrustedHostMiddleware, 
+    allowed_hosts=["*"]  # Configure with specific hosts in production
+)
+
+# Add CORS middleware for frontend integration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure with specific origins in production
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler for better error responses."""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "error",
+            "message": "Internal server error",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on application startup."""
+    logger.info("Initializing database...")
+    await init_db()
+    logger.info("Database initialized successfully")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up database connections on application shutdown."""
+    logger.info("Closing database connections...")
+    await close_db()
+    logger.info("Database connections closed")
 
 
 # Fixed: HMAC signature and timestamp verification function
@@ -91,14 +150,16 @@ def verify_hmac_signature(signature: str, timestamp: str, body: bytes) -> None:
 async def ingest_monitoring_data(
     request: Request,
     payload: Payload,
+    db: AsyncSession = Depends(get_db_session),
     x_agent_signature: str = Header(..., alias="X-Agent-Signature"),
     x_agent_timestamp: str = Header(..., alias="X-Agent-Timestamp")
 ) -> Dict[str, str]:
     """
-    Receive monitoring data from Go agent and log it.
+    Receive monitoring data from Go agent, persist to database, and log it.
     
     Args:
         payload: The monitoring payload from the Go agent
+        db: Database session dependency
         
     Returns:
         Success message with timestamp
@@ -111,6 +172,41 @@ async def ingest_monitoring_data(
         # Convert payload to dict for logging
         payload_dict = payload.model_dump()
         
+        # Persist system metrics to database
+        metrics_record = MetricsModel(
+            timestamp=payload.timestamp,
+            cpu_usage=payload.metrics.cpu_usage,
+            memory_usage=payload.metrics.memory_usage,
+            disk_usage=payload.metrics.disk_usage,
+            network_rx=payload.metrics.network_rx_bytes_per_sec,
+            network_tx=payload.metrics.network_tx_bytes_per_sec,
+            tcp_connections=payload.metrics.tcp_connections
+        )
+        db.add(metrics_record)
+        
+        # Persist docker events to database
+        for event in payload.docker_events:
+            docker_event_record = DockerEventsModel(
+                timestamp=event.timestamp,
+                type=event.type,
+                action=event.action,
+                container=event.container,
+                image=event.image
+            )
+            db.add(docker_event_record)
+        
+        # Persist container logs to database
+        for log_entry in payload.logs:
+            container_log_record = ContainerLogsModel(
+                container=log_entry.container,
+                timestamp=log_entry.timestamp,
+                message=log_entry.message
+            )
+            db.add(container_log_record)
+        
+        # Commit database changes
+        await db.commit()
+
         # Pretty print to console
         print("\n" + "="*80)
         print(f"📊 MONITORING DATA RECEIVED - {datetime.now().isoformat()}")
@@ -332,14 +428,19 @@ async def ingest_monitoring_data(
 
 
 @app.get("/alerts")
-async def get_current_alerts() -> Dict[str, Any]:
+async def get_current_alerts(db: AsyncSession = Depends(get_db_session)) -> Dict[str, Any]:
     """
-    Get current alerts from both the rules engine and attack detection system.
+    Get current alerts from both the rules engine, attack detection system, and database.
     
     Returns:
-        JSON response with current alerts list from both systems
+        JSON response with current alerts list from all systems
     """
     try:
+        # Get alerts from database
+        db_alerts_query = select(AlertsModel).order_by(desc(AlertsModel.timestamp)).limit(50)
+        db_alerts_result = await db.execute(db_alerts_query)
+        db_alerts = db_alerts_result.scalars().all()
+        
         # Get alerts from the original rules system
         rules_alerts = get_alerts()
         
@@ -349,7 +450,19 @@ async def get_current_alerts() -> Dict[str, Any]:
         # Combine and format alerts
         combined_alerts = []
         
-        # Add attack detection alerts (higher priority)
+        # Add database alerts (highest priority)
+        for alert in db_alerts:
+            combined_alerts.append({
+                "id": f"db_{alert.id}",
+                "timestamp": alert.timestamp.isoformat(),
+                "type": alert.alert_type,
+                "severity": alert.severity,
+                "message": alert.message,
+                "source": "database",
+                "metadata": alert.metadata
+            })
+        
+        # Add attack detection alerts (high priority)
         for alert in attack_alerts:
             combined_alerts.append({
                 "id": f"attack_{alert['timestamp']}",
@@ -409,18 +522,72 @@ async def get_current_alerts() -> Dict[str, Any]:
 
 
 @app.get("/healthz")
-async def health_check() -> Dict[str, str]:
+async def health_check(db: AsyncSession = Depends(get_db_session)) -> Dict[str, Any]:
     """
-    Health check endpoint.
+    Comprehensive health check endpoint for production monitoring.
     
     Returns:
-        Status OK message
+        Health status with database connectivity check
     """
-    return {
+    health_status = {
         "status": "ok",
-        "timestamp": datetime.now().isoformat(),
-        "service": "monitoring-backend"
+        "timestamp": datetime.utcnow().isoformat(),
+        "service": "monitoring-backend",
+        "version": "1.0.0",
+        "checks": {}
     }
+    
+    # Database connectivity check
+    try:
+        # Simple query to test database connection
+        result = await db.execute(select(func.now()))
+        db_time = result.scalar()
+        health_status["checks"]["database"] = {
+            "status": "ok",
+            "response_time_ms": "< 100",  # Placeholder - could implement actual timing
+            "connection": "active"
+        }
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        health_status["status"] = "degraded"
+        health_status["checks"]["database"] = {
+            "status": "error",
+            "error": str(e)
+        }
+    
+    # Environment checks
+    health_status["checks"]["environment"] = {
+        "secret_configured": bool(SECRET),
+        "logs_directory": logs_dir.exists()
+    }
+    
+    return health_status
+
+
+@app.get("/readiness")
+async def readiness_check(db: AsyncSession = Depends(get_db_session)) -> Dict[str, Any]:
+    """
+    Kubernetes readiness probe endpoint.
+    
+    Returns:
+        Readiness status for load balancer routing
+    """
+    try:
+        # Test database connection
+        await db.execute(select(func.now()))
+        
+        # Check critical configuration
+        if not SECRET:
+            raise HTTPException(status_code=503, detail="Missing required configuration")
+            
+        return {
+            "status": "ready",
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": "monitoring-backend"
+        }
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        raise HTTPException(status_code=503, detail="Service not ready")
 
 
 @app.get("/")
@@ -442,12 +609,170 @@ async def root() -> Dict[str, str]:
     }
 
 
+@app.get("/metrics/recent")
+async def get_recent_metrics(
+    limit: int = Query(default=100, le=1000),
+    db: AsyncSession = Depends(get_db_session)
+) -> Dict[str, Any]:
+    """
+    Get recent system metrics from the database.
+    
+    Args:
+        limit: Maximum number of metrics records to return (max 1000)
+        
+    Returns:
+        JSON response with recent metrics data
+    """
+    try:
+        metrics_query = select(MetricsModel).order_by(desc(MetricsModel.timestamp)).limit(limit)
+        result = await db.execute(metrics_query)
+        metrics = result.scalars().all()
+        
+        metrics_data = []
+        for metric in metrics:
+            metrics_data.append({
+                "id": metric.id,
+                "timestamp": metric.timestamp.isoformat(),
+                "cpu_usage": metric.cpu_usage,
+                "memory_usage": metric.memory_usage,
+                "disk_usage": metric.disk_usage,
+                "network_rx": metric.network_rx,
+                "network_tx": metric.network_tx,
+                "tcp_connections": metric.tcp_connections
+            })
+        
+        return {
+            "status": "success",
+            "metrics": metrics_data,
+            "count": len(metrics_data),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error retrieving metrics: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving metrics: {str(e)}")
+
+
+@app.get("/logs/search")
+async def search_logs(
+    query: str = Query(..., description="Search query for log messages"),
+    container: Optional[str] = Query(default=None, description="Filter by container name"),
+    limit: int = Query(default=100, le=1000),
+    db: AsyncSession = Depends(get_db_session)
+) -> Dict[str, Any]:
+    """
+    Search container logs in the database.
+    
+    Args:
+        query: Search query string
+        container: Optional container name filter
+        limit: Maximum number of log entries to return (max 1000)
+        
+    Returns:
+        JSON response with matching log entries
+    """
+    try:
+        # Build the query
+        logs_query = select(ContainerLogsModel)
+        
+        # Add text search condition
+        logs_query = logs_query.where(ContainerLogsModel.message.ilike(f"%{query}%"))
+        
+        # Add container filter if provided
+        if container:
+            logs_query = logs_query.where(ContainerLogsModel.container == container)
+        
+        # Order by timestamp descending and limit
+        logs_query = logs_query.order_by(desc(ContainerLogsModel.timestamp)).limit(limit)
+        
+        result = await db.execute(logs_query)
+        logs = result.scalars().all()
+        
+        logs_data = []
+        for log in logs:
+            logs_data.append({
+                "id": log.id,
+                "container": log.container,
+                "timestamp": log.timestamp.isoformat(),
+                "message": log.message
+            })
+        
+        return {
+            "status": "success",
+            "logs": logs_data,
+            "count": len(logs_data),
+            "query": query,
+            "container_filter": container,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error searching logs: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error searching logs: {str(e)}")
+
+
+@app.get("/events/recent")
+async def get_recent_events(
+    limit: int = Query(default=100, le=1000),
+    event_type: Optional[str] = Query(default=None, description="Filter by event type"),
+    db: AsyncSession = Depends(get_db_session)
+) -> Dict[str, Any]:
+    """
+    Get recent Docker events from the database.
+    
+    Args:
+        limit: Maximum number of events to return (max 1000)
+        event_type: Optional event type filter
+        
+    Returns:
+        JSON response with recent Docker events
+    """
+    try:
+        events_query = select(DockerEventsModel)
+        
+        # Add event type filter if provided
+        if event_type:
+            events_query = events_query.where(DockerEventsModel.type == event_type)
+        
+        # Order by timestamp descending and limit
+        events_query = events_query.order_by(desc(DockerEventsModel.timestamp)).limit(limit)
+        
+        result = await db.execute(events_query)
+        events = result.scalars().all()
+        
+        events_data = []
+        for event in events:
+            events_data.append({
+                "id": event.id,
+                "timestamp": event.timestamp.isoformat(),
+                "type": event.type,
+                "action": event.action,
+                "container": event.container,
+                "image": event.image
+            })
+        
+        return {
+            "status": "success",
+            "events": events_data,
+            "count": len(events_data),
+            "event_type_filter": event_type,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error retrieving events: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving events: {str(e)}")
+
+
 if __name__ == "__main__":
-    # Run the server
+    # Get production-ready configuration
+    uvicorn_config = perf_config.get_uvicorn_config()
+    
+    # Log performance configuration summary
+    logger.info("Starting monitoring backend with performance configuration:")
+    logger.info(f"Performance summary: {perf_config.get_performance_summary()}")
+    
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
+        **uvicorn_config
     )

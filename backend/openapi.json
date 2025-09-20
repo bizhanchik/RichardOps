@@ -1,0 +1,220 @@
+{
+  "openapi": "3.0.2",
+  "info": {
+    "title": "Monitoring Backend API",
+    "description": "Production-ready monitoring and alerting system for Docker containers",
+    "version": "1.0.0",
+    "contact": {
+      "name": "API Support",
+      "email": "support@monitoring.local"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "description": "Development server"
+    },
+    {
+      "url": "https://monitoring.yourdomain.com",
+      "description": "Production server"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Health Check",
+        "description": "Comprehensive health check endpoint for production monitoring",
+        "operationId": "health_check",
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service is degraded or unhealthy"
+          }
+        },
+        "tags": ["Health"]
+      }
+    },
+    "/readiness": {
+      "get": {
+        "summary": "Readiness Check",
+        "description": "Kubernetes readiness probe endpoint",
+        "operationId": "readiness_check",
+        "responses": {
+          "200": {
+            "description": "Service is ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessStatus"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service is not ready"
+          }
+        },
+        "tags": ["Health"]
+      }
+    },
+    "/ingest": {
+      "post": {
+        "summary": "Ingest Metrics",
+        "description": "Ingest monitoring metrics with HMAC authentication",
+        "operationId": "ingest_metrics",
+        "security": [
+          {
+            "hmac": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetricsPayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Metrics ingested successfully"
+          },
+          "401": {
+            "description": "Invalid HMAC signature"
+          },
+          "422": {
+            "description": "Invalid payload format"
+          }
+        },
+        "tags": ["Ingestion"]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HealthStatus": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok", "degraded", "error"]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "service": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "checks": {
+            "type": "object",
+            "properties": {
+              "database": {
+                "$ref": "#/components/schemas/DatabaseCheck"
+              },
+              "environment": {
+                "$ref": "#/components/schemas/EnvironmentCheck"
+              }
+            }
+          }
+        },
+        "required": ["status", "timestamp", "service"]
+      },
+      "ReadinessStatus": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ready"]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "service": {
+            "type": "string"
+          }
+        },
+        "required": ["status", "timestamp", "service"]
+      },
+      "DatabaseCheck": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok", "error"]
+          },
+          "response_time_ms": {
+            "type": "string"
+          },
+          "connection": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "EnvironmentCheck": {
+        "type": "object",
+        "properties": {
+          "secret_configured": {
+            "type": "boolean"
+          },
+          "logs_directory": {
+            "type": "boolean"
+          }
+        }
+      },
+      "MetricsPayload": {
+        "type": "object",
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "metrics": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": ["timestamp", "metrics"]
+      }
+    },
+    "securitySchemes": {
+      "hmac": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Signature"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Health and readiness endpoints"
+    },
+    {
+      "name": "Ingestion",
+      "description": "Data ingestion endpoints"
+    }
+  ]
+}
