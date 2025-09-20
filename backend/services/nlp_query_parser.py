@@ -71,27 +71,32 @@ class NLPQueryParser:
         self.time_patterns = self._build_time_patterns()
         
     def _build_intent_patterns(self) -> Dict[QueryIntent, List[str]]:
-        """Build patterns for intent classification."""
+        """Build patterns for intent classification with improved keywords."""
         return {
             QueryIntent.SEARCH_LOGS: [
-                "show", "find", "search", "get", "list", "display", "retrieve",
-                "logs", "entries", "messages", "events"
+                "show", "find", "search", "get", "list", "display", "retrieve", "fetch", "pull",
+                "logs", "entries", "messages", "events", "records", "output", "recent", "latest",
+                "container logs", "error logs", "access logs", "debug logs", "application logs"
             ],
             QueryIntent.GENERATE_REPORT: [
-                "generate", "create", "build", "produce", "make",
-                "report", "summary", "analysis", "overview", "digest"
+                "generate", "create", "build", "produce", "make", "compile", "export",
+                "report", "summary", "analysis", "overview", "digest", "dashboard",
+                "statistics", "breakdown", "recap", "document"
             ],
             QueryIntent.INVESTIGATE: [
-                "investigate", "analyze", "examine", "track", "trace",
-                "what", "who", "where", "when", "how", "why"
+                "investigate", "analyze", "examine", "track", "trace", "debug", "troubleshoot",
+                "diagnose", "root cause", "why", "what happened", "what caused", "find out",
+                "look into", "check", "verify", "inspect"
             ],
             QueryIntent.SHOW_ALERTS: [
-                "alerts", "warnings", "notifications", "incidents",
-                "critical", "urgent", "problems", "issues"
+                "alerts", "warnings", "notifications", "incidents", "alarms",
+                "critical", "urgent", "problems", "issues", "failures", "errors",
+                "anomalies", "exceptions", "faults", "outages"
             ],
             QueryIntent.ANALYZE_TRENDS: [
-                "trends", "patterns", "statistics", "metrics",
-                "over time", "historical", "compare", "growth"
+                "trends", "patterns", "statistics", "metrics", "analytics",
+                "over time", "historical", "compare", "growth", "changes",
+                "performance", "usage", "behavior", "evolution", "progression"
             ]
         }
     
@@ -177,9 +182,10 @@ class NLPQueryParser:
         )
     
     def _classify_intent(self, query: str) -> Tuple[QueryIntent, float]:
-        """Classify the intent of the query."""
+        """Classify the intent of the query with improved domain-aware logic."""
         intent_scores = {}
         
+        # Calculate keyword-based scores
         for intent, keywords in self.intent_patterns.items():
             score = 0
             for keyword in keywords:
@@ -190,21 +196,41 @@ class NLPQueryParser:
             if keywords:
                 intent_scores[intent] = score / len(keywords)
         
-        if not intent_scores:
+        # Check if query contains security/monitoring domain terms
+        domain_terms = [
+            "log", "logs", "error", "errors", "alert", "alerts", "warning", "warnings",
+            "container", "docker", "server", "system", "security", "monitoring",
+            "event", "events", "incident", "incidents", "metric", "metrics",
+            "status", "health", "performance", "cpu", "memory", "disk", "network",
+            "database", "api", "service", "application", "backend", "frontend"
+        ]
+        
+        has_domain_context = any(term in query for term in domain_terms)
+        
+        # If no domain context and no strong keyword matches, return unknown
+        if not has_domain_context and (not intent_scores or max(intent_scores.values()) < 0.1):
             return QueryIntent.UNKNOWN, 0.0
         
-        best_intent = max(intent_scores, key=intent_scores.get)
-        confidence = intent_scores[best_intent]
+        # Apply improved heuristics with domain awareness
+        if has_domain_context:
+            if "report" in query or "summary" in query:
+                return QueryIntent.GENERATE_REPORT, max(intent_scores.get(QueryIntent.GENERATE_REPORT, 0), 0.8)
+            elif "alert" in query or "critical" in query or "urgent" in query:
+                return QueryIntent.SHOW_ALERTS, max(intent_scores.get(QueryIntent.SHOW_ALERTS, 0), 0.8)
+            elif ("investigate" in query or 
+                  (query.startswith(("what", "who", "where", "when", "how", "why")) and has_domain_context)):
+                return QueryIntent.INVESTIGATE, max(intent_scores.get(QueryIntent.INVESTIGATE, 0), 0.8)
         
-        # Apply some heuristics for better classification
-        if "report" in query or "summary" in query:
-            return QueryIntent.GENERATE_REPORT, max(confidence, 0.8)
-        elif "investigate" in query or query.startswith(("what", "who", "where", "when", "how", "why")):
-            return QueryIntent.INVESTIGATE, max(confidence, 0.8)
-        elif "alert" in query or "critical" in query:
-            return QueryIntent.SHOW_ALERTS, max(confidence, 0.8)
+        # Return best intent only if confidence is above threshold
+        if intent_scores:
+            best_intent = max(intent_scores, key=intent_scores.get)
+            confidence = intent_scores[best_intent]
+            
+            # Minimum confidence threshold
+            if confidence >= 0.05:  # At least 5% keyword match
+                return best_intent, confidence
         
-        return best_intent, confidence
+        return QueryIntent.UNKNOWN, 0.0
     
     def _extract_entities(self, query: str) -> List[ExtractedEntity]:
         """Extract entities from the query using pattern matching."""

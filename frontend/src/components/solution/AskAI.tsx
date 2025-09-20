@@ -1,11 +1,37 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User } from 'lucide-react';
+import { Send, Bot, User, Database, Clock, Container, AlertCircle, CheckCircle, Code, Terminal } from 'lucide-react';
+
+interface LogEntry {
+  id: string;
+  timestamp: string;
+  container: string;
+  message: string;
+  level?: string;
+}
+
+interface QueryResult {
+  success: boolean;
+  result?: {
+    intent: string;
+    results: any[];
+    count: number;
+    data_source?: string;
+    query_info?: {
+      query_type: string;
+      method_called?: string;
+      parameters?: Record<string, any>;
+    };
+  };
+  processing_time_ms?: number;
+  error?: string;
+}
 
 interface Message {
   id: string;
   type: 'user' | 'ai';
   content: string;
   timestamp: Date;
+  queryResult?: QueryResult;
 }
 
 interface AskAIProps {
@@ -33,13 +59,14 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     scrollToBottom();
   }, [messages]);
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!inputValue.trim() || isLoading) return;
 
+    const userQuery = inputValue.trim();
     const newMessage: Message = {
       id: Date.now().toString(),
       type: 'user',
-      content: inputValue,
+      content: userQuery,
       timestamp: new Date()
     };
 
@@ -47,17 +74,72 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     setInputValue('');
     setIsLoading(true);
 
-    // Simulate AI response with realistic delay
-    setTimeout(() => {
+    try {
+      // Call the backend NLP API
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiBaseUrl}/api/nlp/query`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query: userQuery }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      // Create AI response with query result
       const aiResponse: Message = {
         id: (Date.now() + 1).toString(),
         type: 'ai',
-        content: "I understand you're asking about your system. While I'm not fully connected to live data yet, I can see from your dashboard that your systems are performing well with 16.2% CPU usage and 75.3% memory usage. Is there a specific metric you'd like me to explain?",
-        timestamp: new Date()
+        content: generateResponseContent(result),
+        timestamp: new Date(),
+        queryResult: result
       };
+
       setMessages(prev => [...prev, aiResponse]);
+    } catch (error) {
+      console.error('Error calling NLP API:', error);
+      
+      // Create error response
+      const errorResponse: Message = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: `I encountered an error while processing your query: ${error instanceof Error ? error.message : 'Unknown error'}. Please make sure the backend server is running on localhost:8000.`,
+        timestamp: new Date(),
+        queryResult: {
+          query_type: 'error',
+          method_called: 'N/A',
+          parameters: {},
+          execution_time: 0,
+          total_results: 0,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      };
+
+      setMessages(prev => [...prev, errorResponse]);
+    } finally {
       setIsLoading(false);
-    }, 2000 + Math.random() * 1000); // 2-3 seconds delay
+    }
+  };
+
+  const generateResponseContent = (result: QueryResult): string => {
+    if (!result.success || result.error) {
+      return `I encountered an error: ${result.error || 'Unknown error occurred'}`;
+    }
+
+    const processingTime = result.processing_time_ms || 0;
+    const queryType = result.result?.intent || 'unknown';
+    const totalResults = result.result?.count || 0;
+    
+    if (totalResults === 0) {
+      return `I processed your query but didn't find any matching results. The query was interpreted as "${queryType}" and executed in ${processingTime.toFixed(2)}ms.`;
+    }
+
+    return `Found ${totalResults} result${totalResults !== 1 ? 's' : ''} for your "${queryType}" query. Execution completed in ${processingTime.toFixed(2)}ms.`;
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -71,10 +153,142 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const formatLogLevel = (level?: string) => {
+    if (!level) return null;
+    
+    const levelColors = {
+      'ERROR': 'bg-red-100 text-red-800 border-red-200',
+      'WARN': 'bg-yellow-100 text-yellow-800 border-yellow-200',
+      'INFO': 'bg-blue-100 text-blue-800 border-blue-200',
+      'DEBUG': 'bg-gray-100 text-gray-800 border-gray-200',
+    };
+    
+    const colorClass = levelColors[level.toUpperCase() as keyof typeof levelColors] || 'bg-gray-100 text-gray-800 border-gray-200';
+    
+    return (
+      <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
+        {level.toUpperCase()}
+      </span>
+    );
+  };
+
+  const LogEntryComponent: React.FC<{ log: LogEntry; index: number }> = ({ log, index }) => (
+    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-2 font-mono text-xs">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center space-x-2">
+          <span className="text-gray-500">#{index + 1}</span>
+          <Container className="w-3 h-3 text-blue-500" />
+          <span className="font-semibold text-blue-700">{log.container}</span>
+          {log.level && formatLogLevel(log.level)}
+        </div>
+        <div className="flex items-center space-x-1 text-gray-500">
+          <Clock className="w-3 h-3" />
+          <span>{new Date(log.timestamp).toLocaleString()}</span>
+        </div>
+      </div>
+      <div className="bg-white border border-gray-100 rounded p-2 text-gray-800 leading-relaxed">
+        {log.message}
+      </div>
+    </div>
+  );
+
+  const MethodCallComponent: React.FC<{ queryResult: QueryResult }> = ({ queryResult }) => {
+    const methodCalled = queryResult.result?.query_info?.method_called || 'process_query';
+    const queryType = queryResult.result?.intent || 'unknown';
+    const executionTime = queryResult.processing_time_ms || 0;
+    const totalResults = queryResult.result?.count || 0;
+    const parameters = queryResult.result?.query_info?.parameters || {};
+    const dataSource = queryResult.result?.data_source || 'unknown';
+
+    return (
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 mb-4">
+        <div className="flex items-center space-x-2 mb-3">
+          <Code className="w-4 h-4 text-blue-600" />
+          <h4 className="font-semibold text-blue-900">Query Execution Details</h4>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+          <div className="bg-white rounded-lg p-3 border border-blue-100">
+            <div className="flex items-center space-x-2 mb-1">
+              <Terminal className="w-3 h-3 text-green-600" />
+              <span className="text-xs font-medium text-gray-600">METHOD CALLED</span>
+            </div>
+            <code className="text-sm font-mono text-green-700 bg-green-50 px-2 py-1 rounded">
+              {methodCalled}
+            </code>
+          </div>
+          
+          <div className="bg-white rounded-lg p-3 border border-blue-100">
+            <div className="flex items-center space-x-2 mb-1">
+              <Database className="w-3 h-3 text-purple-600" />
+              <span className="text-xs font-medium text-gray-600">QUERY INTENT</span>
+            </div>
+            <span className="text-sm font-semibold text-purple-700 bg-purple-50 px-2 py-1 rounded">
+              {queryType}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+          <div className="bg-white rounded-lg p-3 border border-blue-100">
+            <div className="flex items-center space-x-2 mb-1">
+              <Clock className="w-3 h-3 text-orange-600" />
+              <span className="text-xs font-medium text-gray-600">EXECUTION TIME</span>
+            </div>
+            <span className="text-sm font-mono text-orange-700">
+              {executionTime.toFixed(2)}ms
+            </span>
+          </div>
+          
+          <div className="bg-white rounded-lg p-3 border border-blue-100">
+            <div className="flex items-center space-x-2 mb-1">
+              {totalResults > 0 ? (
+                <CheckCircle className="w-3 h-3 text-green-600" />
+              ) : (
+                <AlertCircle className="w-3 h-3 text-yellow-600" />
+              )}
+              <span className="text-xs font-medium text-gray-600">RESULTS FOUND</span>
+            </div>
+            <span className="text-sm font-semibold text-gray-700">
+              {totalResults.toLocaleString()}
+            </span>
+          </div>
+        </div>
+
+        {dataSource && (
+          <div className="bg-white rounded-lg p-3 border border-blue-100 mb-3">
+            <div className="flex items-center space-x-2 mb-1">
+              <Database className="w-3 h-3 text-blue-600" />
+              <span className="text-xs font-medium text-gray-600">DATA SOURCE</span>
+            </div>
+            <span className="text-sm font-semibold text-blue-700 bg-blue-50 px-2 py-1 rounded">
+              {dataSource}
+            </span>
+          </div>
+        )}
+
+        {Object.keys(parameters).length > 0 && (
+          <div className="bg-white rounded-lg p-3 border border-blue-100">
+            <div className="flex items-center space-x-2 mb-2">
+              <Code className="w-3 h-3 text-indigo-600" />
+              <span className="text-xs font-medium text-gray-600">PARAMETERS</span>
+            </div>
+            <pre className="text-xs font-mono text-indigo-700 bg-indigo-50 p-2 rounded overflow-x-auto">
+              {JSON.stringify(parameters, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const suggestedQuestions = [
-    "What's the current health of my system?",
-    "Are there any security concerns?",
-    "Analyze recent security alerts",
+    "show me recent logs",
+    "backend container logs",
+    "logs from last hour",
+    "error logs today",
+    "container logs with high severity",
+    "show me all containers"
   ];
 
   return (
@@ -114,6 +328,42 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
                     {formatTime(message.timestamp)}
                   </p>
                 </div>
+                
+                {/* Query Result Display */}
+                {message.type === 'ai' && message.queryResult && (
+                  <div className="mt-4 max-w-4xl">
+                    <MethodCallComponent queryResult={message.queryResult} />
+                    
+                    {message.queryResult.result?.results && message.queryResult.result.results.length > 0 && (
+                      <div className="bg-white border border-gray-200 rounded-lg p-4">
+                        <div className="flex items-center space-x-2 mb-4">
+                          <Terminal className="w-4 h-4 text-gray-600" />
+                          <h4 className="font-semibold text-gray-900">
+                            Query Results ({message.queryResult.result.results.length})
+                          </h4>
+                        </div>
+                        
+                        <div className="max-h-96 overflow-y-auto space-y-2">
+                          {message.queryResult.result.results.slice(0, 10).map((result, index) => (
+                            <div key={index} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                              <pre className="text-xs font-mono text-gray-700 overflow-x-auto whitespace-pre-wrap">
+                                {JSON.stringify(result, null, 2)}
+                              </pre>
+                            </div>
+                          ))}
+                          
+                          {message.queryResult.result.results.length > 10 && (
+                            <div className="text-center py-2">
+                              <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                                ... and {message.queryResult.result.results.length - 10} more entries
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ))}
