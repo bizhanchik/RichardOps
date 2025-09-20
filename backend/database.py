@@ -1,7 +1,11 @@
 import os
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import text
 from typing import AsyncGenerator
+
+logger = logging.getLogger("monitoring-backend")
 
 
 class Base(DeclarativeBase):
@@ -63,7 +67,7 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db():
     """
-    Initialize database by creating all tables.
+    Initialize database by creating all tables and indexes safely.
     This should be called on application startup.
     """
     async with engine.begin() as conn:
@@ -72,7 +76,40 @@ async def init_db():
             MetricsModel, DockerEventsModel, ContainerLogsModel, 
             AlertsModel, EmailNotificationsModel
         )
+        
+        # Create all tables (this will skip existing tables)
         await conn.run_sync(Base.metadata.create_all)
+        
+        # Create custom indexes safely using IF NOT EXISTS
+        await _create_custom_indexes_safely(conn)
+
+
+async def _create_custom_indexes_safely(conn):
+    """
+    Create custom indexes that might not be handled properly by create_all().
+    Uses IF NOT EXISTS to avoid duplicate index errors.
+    """
+    custom_indexes = [
+        # GIN index for full-text search on container logs message
+        """
+        CREATE INDEX IF NOT EXISTS idx_container_logs_message_gin 
+        ON container_logs USING gin (message gin_trgm_ops)
+        """,
+        
+        # Enable pg_trgm extension if not already enabled
+        """
+        CREATE EXTENSION IF NOT EXISTS pg_trgm
+        """,
+    ]
+    
+    for index_sql in custom_indexes:
+        try:
+            await conn.execute(text(index_sql))
+            logger.info(f"Successfully executed: {index_sql.strip()}")
+        except Exception as e:
+            # Log the error but don't crash the application
+            logger.warning(f"Index creation warning (may already exist): {e}")
+            # Continue with other indexes
 
 
 async def close_db():

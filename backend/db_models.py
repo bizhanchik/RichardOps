@@ -57,13 +57,12 @@ class ContainerLogsModel(Base):
     timestamp = Column(DateTime, nullable=False, index=True)
     message = Column(Text)
     
-    # Indexes for efficient queries and full-text search
+    # Indexes for efficient queries (excluding GIN index which is handled separately)
     __table_args__ = (
         Index('idx_container_logs_timestamp_desc', 'timestamp', postgresql_using='btree'),
         Index('idx_container_logs_container_timestamp', 'container', 'timestamp'),
-        # GIN index for full-text search on message
-        Index('idx_container_logs_message_gin', 'message', postgresql_using='gin', 
-              postgresql_ops={'message': 'gin_trgm_ops'}),
+        # Note: GIN index for full-text search is created separately in database.py
+        # to avoid duplicate index creation errors during startup
     )
 
 
