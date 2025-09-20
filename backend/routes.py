@@ -2,7 +2,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func, and_
 from pydantic import BaseModel, Field
 
 from database import get_db_session
@@ -41,6 +41,12 @@ class AlertResponse(BaseModel):
     message: Optional[str]
     score: Optional[float]
     resolved: bool
+
+class ContainerResponse(BaseModel):
+    container: str
+    last_event_time: str
+    last_action: str
+    status: str
 
 # Create router
 router = APIRouter()
@@ -270,3 +276,71 @@ async def get_alerts(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving alerts: {str(e)}")
+
+@router.get("/containers", response_model=List[ContainerResponse])
+async def get_containers(
+    db: AsyncSession = Depends(get_db_session)
+) -> List[ContainerResponse]:
+    """
+    GET /containers
+    Returns a list of containers with their last event information and computed status.
+    Groups docker_events by container and gets the most recent event for each.
+    """
+    try:
+        # Subquery to get the latest timestamp for each container
+        latest_events_subquery = (
+            select(
+                DockerEventsModel.container,
+                func.max(DockerEventsModel.timestamp).label('max_timestamp')
+            )
+            .where(DockerEventsModel.container.isnot(None))
+            .group_by(DockerEventsModel.container)
+            .subquery()
+        )
+        
+        # Main query to get container details with latest event info
+        query = (
+            select(
+                DockerEventsModel.container,
+                DockerEventsModel.timestamp,
+                DockerEventsModel.action
+            )
+            .join(
+                latest_events_subquery,
+                and_(
+                    DockerEventsModel.container == latest_events_subquery.c.container,
+                    DockerEventsModel.timestamp == latest_events_subquery.c.max_timestamp
+                )
+            )
+            .order_by(DockerEventsModel.container)
+        )
+        
+        result = await db.execute(query)
+        containers_data = result.fetchall()
+        
+        # Convert to response models with status computation
+        containers_list = []
+        for container_data in containers_data:
+            container_name = container_data.container
+            last_event_time = container_data.timestamp
+            last_action = container_data.action or "unknown"
+            
+            # Compute status based on last_action
+            if last_action == "start":
+                status = "running"
+            elif last_action in ["stop", "die"]:
+                status = "stopped"
+            else:
+                status = "unknown"
+            
+            containers_list.append(ContainerResponse(
+                container=container_name,
+                last_event_time=last_event_time.isoformat(),
+                last_action=last_action,
+                status=status
+            ))
+        
+        return containers_list
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving containers: {str(e)}")
