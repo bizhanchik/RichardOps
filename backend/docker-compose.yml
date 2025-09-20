@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   monitoring-backend:
     build: 
@@ -9,9 +7,9 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Mount logs directory for persistence
-      - ./logs:/app/logs:rw
-      # Mount configuration if needed
+      # Use Docker-managed volume for logs
+      - logs_data:/app/logs
+      # Mount configuration file
       - ./.env:/app/.env:ro
     environment:
       - PYTHONPATH=/app
@@ -69,6 +67,8 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  logs_data:
     driver: local
 
 networks:
