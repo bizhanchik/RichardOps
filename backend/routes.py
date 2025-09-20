@@ -28,6 +28,7 @@ class DockerEventResponse(BaseModel):
     image: Optional[str]
 
 class LogEntryResponse(BaseModel):
+    id: int
     timestamp: str
     container: Optional[str]
     message: Optional[str]
@@ -186,6 +187,7 @@ async def search_logs(
         logs_list = []
         for log in logs:
             logs_list.append(LogEntryResponse(
+                id=log.id,
                 timestamp=log.timestamp.isoformat(),
                 container=log.container,
                 message=log.message
@@ -195,6 +197,46 @@ async def search_logs(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error searching logs: {str(e)}")
+
+@router.get("/logs/recent", response_model=List[LogEntryResponse])
+async def get_recent_logs(
+    limit: int = Query(default=50, le=500, description="Number of recent log entries to return"),
+    container: Optional[str] = Query(default=None, description="Filter logs by container name"),
+    db: AsyncSession = Depends(get_db_session)
+) -> List[LogEntryResponse]:
+    """
+    GET /logs/recent?limit=50&container=web-server
+    Returns recent log entries ordered by timestamp descending.
+    Optionally filter by container name.
+    """
+    try:
+        # Build base query
+        query = select(ContainerLogsModel)
+        
+        # Apply container filter if provided
+        if container:
+            query = query.where(ContainerLogsModel.container == container)
+        
+        # Order by timestamp descending and apply limit
+        query = query.order_by(desc(ContainerLogsModel.timestamp)).limit(limit)
+        
+        result = await db.execute(query)
+        logs = result.scalars().all()
+        
+        # Convert to response models
+        logs_list = []
+        for log in logs:
+            logs_list.append(LogEntryResponse(
+                id=log.id,
+                timestamp=log.timestamp.isoformat(),
+                container=log.container,
+                message=log.message
+            ))
+        
+        return logs_list
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving recent logs: {str(e)}")
 
 @router.get("/alerts", response_model=List[AlertResponse])
 async def get_alerts(
