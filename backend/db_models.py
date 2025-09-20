@@ -54,7 +54,7 @@ class ContainerLogsModel(Base):
     
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     container = Column(String(255), index=True)
-    timestamp = Column(DateTime, nullable=False, index=True)
+    timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     message = Column(Text)
     
     # Indexes for efficient queries (excluding GIN index which is handled separately)
