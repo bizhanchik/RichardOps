@@ -33,7 +33,7 @@ class LogSearchRequest(BaseModel):
     size: int = Field(100, ge=1, le=1000, description="Number of results to return")
     from_: int = Field(0, ge=0, alias="from", description="Starting offset for pagination")
     sort_field: str = Field("timestamp", description="Field to sort by")
-    sort_order: str = Field("desc", regex="^(asc|desc)$", description="Sort order")
+    sort_order: str = Field("desc", pattern="^(asc|desc)$", description="Sort order")
     
     @validator('log_levels')
     def validate_log_levels(cls, v):
@@ -204,7 +204,7 @@ async def quick_search_logs(
 @router.get("/analytics/logs", response_model=AggregationResponse)
 async def get_log_analytics(
     hours: int = Query(24, ge=1, le=720, description="Hours to analyze"),
-    interval: str = Query("1h", regex="^(1m|5m|15m|30m|1h|6h|12h|1d)$", description="Time interval")
+    interval: str = Query("1h", pattern="^(1m|5m|15m|30m|1h|6h|12h|1d)$", description="Time interval")
 ):
     """
     Get log analytics and aggregations
@@ -240,7 +240,7 @@ async def get_log_analytics(
 @router.get("/analytics/alerts", response_model=AggregationResponse)
 async def get_alert_analytics(
     hours: int = Query(24, ge=1, le=720, description="Hours to analyze"),
-    interval: str = Query("1h", regex="^(1m|5m|15m|30m|1h|6h|12h|1d)$", description="Time interval")
+    interval: str = Query("1h", pattern="^(1m|5m|15m|30m|1h|6h|12h|1d)$", description="Time interval")
 ):
     """
     Get alert analytics and aggregations
