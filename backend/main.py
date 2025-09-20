@@ -32,6 +32,7 @@ import routes as routes_module
 from routes_nlp import router as nlp_basic_router
 from api.nlp_endpoints import nlp_router
 from logs_api import router as logs_api_router
+from services.opensearch_client import initialize_opensearch, cleanup_opensearch
 
 api_router = routes_module.router
 
@@ -114,18 +115,29 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database on application startup."""
+    """Initialize database and OpenSearch on application startup."""
     logger.info("Initializing database...")
     await init_db()
     logger.info("Database initialized successfully")
+    
+    logger.info("Initializing OpenSearch...")
+    opensearch_initialized = initialize_opensearch()
+    if opensearch_initialized:
+        logger.info("OpenSearch initialized successfully")
+    else:
+        logger.warning("OpenSearch initialization failed - running in fallback mode")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Clean up database connections on application shutdown."""
+    """Clean up database and OpenSearch connections on application shutdown."""
     logger.info("Closing database connections...")
     await close_db()
     logger.info("Database connections closed")
+    
+    logger.info("Cleaning up OpenSearch connections...")
+    cleanup_opensearch()
+    logger.info("OpenSearch connections cleaned up")
 
 
 # Fixed: HMAC signature and timestamp verification function
