@@ -358,6 +358,15 @@ class LogIndexer:
     def is_available(self) -> bool:
         """Check if the indexing service is available"""
         return self._check_connection()
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get detailed status information about the indexing service"""
+        is_connected = self._check_connection()
+        return {
+            "connected": is_connected,
+            "fallback_mode": self._fallback_mode,
+            "service": "opensearch" if is_connected else "fallback"
+        }
 
 
 # Global log indexer instance

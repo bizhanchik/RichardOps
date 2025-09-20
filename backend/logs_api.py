@@ -353,13 +353,27 @@ async def health_check():
         search_service = get_log_search_service()
         indexer = get_log_indexer()
         
-        search_available = search_service.is_available()
-        indexer_available = indexer.is_connected()
+        search_status = search_service.get_status()
+        indexer_status = indexer.get_status()
         
+        search_available = search_status["connected"]
+        indexer_available = indexer_status["connected"]
+        
+        # Determine overall status - degraded if OpenSearch unavailable but API functional
+        if search_available and indexer_available:
+            status = "healthy"
+        elif not search_available and not indexer_available:
+            status = "degraded"  # OpenSearch unavailable, fallback mode active
+        else:
+            status = "degraded"  # Partial availability
+            
         return {
-            "status": "healthy" if search_available and indexer_available else "degraded",
-            "search_service": "available" if search_available else "unavailable",
-            "indexer_service": "available" if indexer_available else "unavailable",
+            "status": status,
+            "search_service": search_status,
+            "indexer_service": indexer_status,
+            "opensearch_status": "connected" if (search_available and indexer_available) else "disconnected",
+            "fallback_mode": search_status["fallback_mode"] or indexer_status["fallback_mode"],
+            "message": "OpenSearch unavailable, using fallback mode" if not (search_available and indexer_available) else "All services operational",
             "timestamp": datetime.now().isoformat()
         }
         
