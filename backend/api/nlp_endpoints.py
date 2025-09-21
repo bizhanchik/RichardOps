@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List
 import time
 
-from services.nlp_query_system import get_nlp_system
+from services.simple_nlp_system import get_simple_nlp_system
 from services.improved_intent_classifier import reset_improved_classifier
 from services.nlp_query_parser import reset_nlp_parser
 
@@ -89,10 +89,10 @@ async def process_nlp_query(request: NLPQueryRequest) -> NLPQueryResponse:
         NLPQueryResponse with processing results
     """
     try:
-        # Process the query
+        # Process the query using simple mapping system
         start_time = time.time()
-        nlp_system = get_nlp_system()
-        result = nlp_system.process_query(request.query, request.user_context)
+        nlp_system = get_simple_nlp_system()
+        result = nlp_system.process_query(request.query)
         processing_time = (time.time() - start_time) * 1000
         
         return NLPQueryResponse(
@@ -122,8 +122,9 @@ async def get_query_suggestions(
         SuggestionsResponse with query suggestions
     """
     try:
-        nlp_system = get_nlp_system()
-        suggestions = nlp_system.get_query_suggestions(partial_query)
+        nlp_system = get_simple_nlp_system()
+        # Simple system doesn't filter by partial query, just returns all suggestions
+        suggestions = nlp_system._get_query_suggestions()
         
         return SuggestionsResponse(
             success=True,
@@ -146,7 +147,7 @@ async def get_system_status() -> StatusResponse:
         StatusResponse with system status information
     """
     try:
-        nlp_system = get_nlp_system()
+        nlp_system = get_simple_nlp_system()
         status = nlp_system.get_system_status()
         
         return StatusResponse(

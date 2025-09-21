@@ -5,7 +5,7 @@ This module translates structured NLP queries into SQL queries and other data so
 queries for security monitoring and log analysis.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Union
 from sqlalchemy import and_, or_, desc, func, text
 from sqlalchemy.orm import Session
@@ -259,8 +259,8 @@ class QueryTranslator:
             Dict containing success status, logs data, and metadata
         """
         try:
-            # Calculate time one hour ago
-            one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+            # Calculate time one hour ago using timezone-aware datetime
+            one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
             
             # Query for logs from the last hour
             query = db_session.query(ContainerLogsModel).filter(

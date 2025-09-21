@@ -13,21 +13,8 @@ import json
 import os
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Define QueryIntent enum locally to avoid circular import
-from enum import Enum
-
-class QueryIntent(Enum):
-    """Types of query intents the system can handle."""
-    SEARCH_LOGS = "search_logs"
-    GENERATE_REPORT = "generate_report"
-    INVESTIGATE = "investigate"
-    SHOW_ALERTS = "show_alerts"
-    ANALYZE_TRENDS = "analyze_trends"
-    ANALYTICS_SUMMARY = "analytics_summary"
-    ANALYTICS_ANOMALIES = "analytics_anomalies"
-    ANALYTICS_PERFORMANCE = "analytics_performance"
-    ANALYTICS_METRICS = "analytics_metrics"
-    UNKNOWN = "unknown"
+# Import QueryIntent from the main parser to avoid enum mismatch
+from services.nlp_query_parser import QueryIntent
 
 
 @dataclass

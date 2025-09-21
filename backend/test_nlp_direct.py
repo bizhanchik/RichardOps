@@ -21,8 +21,8 @@ def test_nlp_query():
     # Initialize NLP system
     nlp_system = NLPQuerySystem()
     
-    # Test query
-    query = "Show recent error logs and stack traces"
+    # Test query - specifically for SEARCH_LOGS intent
+    query = "show me recent logs"
     
     print(f"Testing query: {query}")
     print("-" * 50)
