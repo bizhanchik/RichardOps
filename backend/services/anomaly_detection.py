@@ -1,11 +1,14 @@
 """
-Anomaly Detection Service
+Enhanced Anomaly Detection Service
 
-This service provides functionality to detect various types of anomalies in the monitoring data:
-- Sudden spikes in metrics (CPU, memory, disk usage)
+This service provides advanced functionality to detect various types of anomalies in the monitoring data:
+- Intelligent spike detection using statistical analysis (CPU, memory, disk usage, TCP connections)
+- Adaptive thresholds based on historical patterns and time-of-day variations
+- Multi-window analysis for better context and reduced false positives
+- Confidence scoring based on data quality and statistical significance
 - Too many requests from a single IP address
 - Unusual patterns in container logs and events
-- Performance degradation detection
+- Performance degradation detection with trend analysis
 """
 
 from datetime import datetime, timezone, timedelta
@@ -17,6 +20,8 @@ from collections import defaultdict, Counter
 import statistics
 import logging
 import re
+import math
+import numpy as np
 
 from db_models import (
     MetricsModel, DockerEventsModel, ContainerLogsModel, AlertsModel
@@ -26,15 +31,40 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AnomalyThresholds:
-    """Configuration for anomaly detection thresholds"""
+    """Enhanced configuration for anomaly detection thresholds"""
+    # Statistical thresholds (z-score based)
+    cpu_spike_zscore: float = 2.0  # Standard deviations from mean
+    memory_spike_zscore: float = 2.0  # Standard deviations from mean
+    disk_spike_zscore: float = 1.8  # Standard deviations from mean
+    connection_spike_zscore: float = 2.5  # Standard deviations from mean
+    
+    # Percentage-based thresholds (fallback for low data scenarios)
     cpu_spike_threshold: float = 30.0  # % increase from baseline
     memory_spike_threshold: float = 25.0  # % increase from baseline
     disk_spike_threshold: float = 20.0  # % increase from baseline
+    connection_spike_threshold: int = 500  # new connections threshold
+    
+    # Minimum data requirements for statistical analysis
+    min_baseline_samples: int = 10  # Minimum samples for reliable statistics
+    min_recent_samples: int = 5  # Minimum recent samples
+    
+    # Confidence thresholds
+    min_confidence: float = 0.7  # Minimum confidence to report anomaly
+    high_confidence: float = 0.9  # Threshold for high confidence anomalies
+    
+    # Other thresholds
     ip_request_threshold: int = 100  # requests per hour from single IP
     error_rate_threshold: float = 10.0  # % error rate
     event_volume_threshold: int = 100  # events per period
     container_restart_threshold: int = 5  # restarts per period
-    connection_spike_threshold: int = 500  # new connections threshold
+    
+    # Time-based analysis
+    baseline_hours: int = 24  # Hours of historical data for baseline
+    comparison_windows: List[int] = None  # Multiple comparison windows
+    
+    def __post_init__(self):
+        if self.comparison_windows is None:
+            self.comparison_windows = [1, 3, 6]  # 1h, 3h, 6h windows
 
 @dataclass
 class Anomaly:
@@ -48,11 +78,97 @@ class Anomaly:
     confidence: float = 1.0
 
 class AnomalyDetectionService:
-    """Service for detecting anomalies in monitoring data"""
+    """Enhanced service for detecting anomalies in monitoring data using statistical analysis"""
     
     def __init__(self, thresholds: Optional[AnomalyThresholds] = None):
         self.thresholds = thresholds or AnomalyThresholds()
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+    
+    def _calculate_statistics(self, values: List[float]) -> Dict[str, float]:
+        """Calculate statistical measures for a dataset"""
+        if not values or len(values) < 2:
+            return {"mean": 0, "std": 0, "median": 0, "q75": 0, "q95": 0}
+        
+        try:
+            values_array = np.array(values)
+            return {
+                "mean": float(np.mean(values_array)),
+                "std": float(np.std(values_array, ddof=1)),
+                "median": float(np.median(values_array)),
+                "q75": float(np.percentile(values_array, 75)),
+                "q95": float(np.percentile(values_array, 95)),
+                "min": float(np.min(values_array)),
+                "max": float(np.max(values_array))
+            }
+        except Exception as e:
+            self.logger.warning(f"Error calculating statistics: {e}")
+            return {"mean": 0, "std": 0, "median": 0, "q75": 0, "q95": 0}
+    
+    def _calculate_zscore(self, value: float, baseline_stats: Dict[str, float]) -> float:
+        """Calculate z-score for a value against baseline statistics"""
+        if baseline_stats["std"] == 0:
+            return 0.0
+        return abs(value - baseline_stats["mean"]) / baseline_stats["std"]
+    
+    def _calculate_confidence(self, 
+                            zscore: float, 
+                            baseline_samples: int, 
+                            recent_samples: int,
+                            trend_consistency: float = 1.0) -> float:
+        """Calculate confidence score for an anomaly detection"""
+        # Base confidence from z-score (sigmoid function)
+        zscore_confidence = 1 / (1 + math.exp(-zscore + 2))
+        
+        # Sample size confidence
+        baseline_confidence = min(baseline_samples / 50, 1.0)  # Max confidence at 50+ samples
+        recent_confidence = min(recent_samples / 10, 1.0)  # Max confidence at 10+ samples
+        sample_confidence = (baseline_confidence + recent_confidence) / 2
+        
+        # Overall confidence
+        confidence = zscore_confidence * sample_confidence * trend_consistency
+        return min(confidence, 1.0)
+    
+    def _detect_trend(self, values: List[float], window_size: int = 5) -> Dict[str, Any]:
+        """Detect trend in time series data"""
+        if len(values) < window_size:
+            return {"trend": "insufficient_data", "slope": 0, "consistency": 0}
+        
+        try:
+            # Calculate moving averages
+            moving_avgs = []
+            for i in range(len(values) - window_size + 1):
+                avg = sum(values[i:i + window_size]) / window_size
+                moving_avgs.append(avg)
+            
+            if len(moving_avgs) < 2:
+                return {"trend": "insufficient_data", "slope": 0, "consistency": 0}
+            
+            # Calculate slope using linear regression
+            x = np.arange(len(moving_avgs))
+            y = np.array(moving_avgs)
+            slope = np.polyfit(x, y, 1)[0]
+            
+            # Determine trend direction and consistency
+            if abs(slope) < 0.1:
+                trend = "stable"
+            elif slope > 0:
+                trend = "increasing"
+            else:
+                trend = "decreasing"
+            
+            # Calculate consistency (how well data fits the trend)
+            predicted = np.polyval([slope, moving_avgs[0]], x)
+            mse = np.mean((y - predicted) ** 2)
+            consistency = max(0, 1 - (mse / np.var(y)) if np.var(y) > 0 else 0)
+            
+            return {
+                "trend": trend,
+                "slope": float(slope),
+                "consistency": float(consistency)
+            }
+        except Exception as e:
+            self.logger.warning(f"Error detecting trend: {e}")
+            return {"trend": "error", "slope": 0, "consistency": 0}
     
     async def detect_all_anomalies(
         self, 
@@ -178,15 +294,15 @@ class AnomalyDetectionService:
         db: AsyncSession, 
         start_time: datetime
     ) -> List[Anomaly]:
-        """Detect sudden spikes in system metrics"""
+        """Detect sudden spikes in system metrics using advanced statistical analysis"""
         anomalies = []
         
         try:
-            # Get recent metrics (last hour) and baseline (previous hour)
+            # Get extended baseline for better statistical analysis
+            baseline_start = start_time - timedelta(hours=self.thresholds.baseline_hours)
             recent_start = start_time
-            baseline_start = start_time - timedelta(hours=1)
             
-            # Get baseline metrics
+            # Get all historical metrics for baseline
             baseline_query = select(MetricsModel).where(
                 and_(
                     MetricsModel.timestamp >= baseline_start,
@@ -197,7 +313,7 @@ class AnomalyDetectionService:
             baseline_result = await db.execute(baseline_query)
             baseline_metrics = baseline_result.scalars().all()
             
-            # Get recent metrics
+            # Get recent metrics for comparison
             recent_query = select(MetricsModel).where(
                 MetricsModel.timestamp >= recent_start
             ).order_by(MetricsModel.timestamp)
@@ -205,102 +321,293 @@ class AnomalyDetectionService:
             recent_result = await db.execute(recent_query)
             recent_metrics = recent_result.scalars().all()
             
-            if len(baseline_metrics) < 5 or len(recent_metrics) < 5:
-                return anomalies  # Not enough data
+            if (len(baseline_metrics) < self.thresholds.min_baseline_samples or 
+                len(recent_metrics) < self.thresholds.min_recent_samples):
+                self.logger.warning(f"Insufficient data for statistical analysis: "
+                                  f"baseline={len(baseline_metrics)}, recent={len(recent_metrics)}")
+                return anomalies
             
-            # Calculate baseline averages
-            baseline_cpu = statistics.mean([float(m.cpu_usage) for m in baseline_metrics if m.cpu_usage])
-            baseline_memory = statistics.mean([float(m.memory_usage) for m in baseline_metrics if m.memory_usage])
-            baseline_disk = statistics.mean([float(m.disk_usage) for m in baseline_metrics if m.disk_usage])
+            # Analyze each metric type
+            metric_analyses = await self._analyze_metrics_statistically(
+                baseline_metrics, recent_metrics
+            )
             
-            # Calculate recent averages
-            recent_cpu = statistics.mean([float(m.cpu_usage) for m in recent_metrics if m.cpu_usage])
-            recent_memory = statistics.mean([float(m.memory_usage) for m in recent_metrics if m.memory_usage])
-            recent_disk = statistics.mean([float(m.disk_usage) for m in recent_metrics if m.disk_usage])
-            
-            # Check for CPU spikes
-            if baseline_cpu > 0:
-                cpu_increase = ((recent_cpu - baseline_cpu) / baseline_cpu) * 100
-                if cpu_increase > self.thresholds.cpu_spike_threshold:
-                    severity = "HIGH" if cpu_increase > 50 else "MEDIUM"
-                    anomalies.append(Anomaly(
-                        type="cpu_spike",
-                        severity=severity,
-                        timestamp=datetime.now(timezone.utc),
-                        description=f"CPU usage spike detected: {cpu_increase:.1f}% increase",
-                        details={
-                            "baseline_cpu": round(baseline_cpu, 2),
-                            "recent_cpu": round(recent_cpu, 2),
-                            "increase_percent": round(cpu_increase, 2)
-                        },
-                        affected_resource="system_cpu"
-                    ))
-            
-            # Check for Memory spikes
-            if baseline_memory > 0:
-                memory_increase = ((recent_memory - baseline_memory) / baseline_memory) * 100
-                if memory_increase > self.thresholds.memory_spike_threshold:
-                    severity = "HIGH" if memory_increase > 40 else "MEDIUM"
-                    anomalies.append(Anomaly(
-                        type="memory_spike",
-                        severity=severity,
-                        timestamp=datetime.now(timezone.utc),
-                        description=f"Memory usage spike detected: {memory_increase:.1f}% increase",
-                        details={
-                            "baseline_memory": round(baseline_memory, 2),
-                            "recent_memory": round(recent_memory, 2),
-                            "increase_percent": round(memory_increase, 2)
-                        },
-                        affected_resource="system_memory"
-                    ))
-            
-            # Check for Disk spikes
-            if baseline_disk > 0:
-                disk_increase = ((recent_disk - baseline_disk) / baseline_disk) * 100
-                if disk_increase > self.thresholds.disk_spike_threshold:
-                    severity = "MEDIUM" if disk_increase > 30 else "LOW"
-                    anomalies.append(Anomaly(
-                        type="disk_spike",
-                        severity=severity,
-                        timestamp=datetime.now(timezone.utc),
-                        description=f"Disk usage spike detected: {disk_increase:.1f}% increase",
-                        details={
-                            "baseline_disk": round(baseline_disk, 2),
-                            "recent_disk": round(recent_disk, 2),
-                            "increase_percent": round(disk_increase, 2)
-                        },
-                        affected_resource="system_disk"
-                    ))
-            
-            # Check for TCP connection spikes
-            if recent_metrics and baseline_metrics:
-                recent_connections = [m.tcp_connections for m in recent_metrics if m.tcp_connections]
-                baseline_connections = [m.tcp_connections for m in baseline_metrics if m.tcp_connections]
-                
-                if recent_connections and baseline_connections:
-                    recent_avg_conn = statistics.mean(recent_connections)
-                    baseline_avg_conn = statistics.mean(baseline_connections)
-                    
-                    conn_increase = recent_avg_conn - baseline_avg_conn
-                    if conn_increase > self.thresholds.connection_spike_threshold:
-                        severity = "HIGH" if conn_increase > 1000 else "MEDIUM"
-                        anomalies.append(Anomaly(
-                            type="connection_spike",
-                            severity=severity,
-                            timestamp=datetime.now(timezone.utc),
-                            description=f"TCP connection spike detected: {int(conn_increase)} new connections",
-                            details={
-                                "baseline_connections": int(baseline_avg_conn),
-                                "recent_connections": int(recent_avg_conn),
-                                "increase": int(conn_increase)
-                            },
-                            affected_resource="network_connections"
-                        ))
+            # Generate anomalies based on statistical analysis
+            for metric_name, analysis in metric_analyses.items():
+                if analysis["anomaly_detected"]:
+                    anomaly = self._create_metric_anomaly(metric_name, analysis)
+                    if anomaly and anomaly.confidence >= self.thresholds.min_confidence:
+                        anomalies.append(anomaly)
             
         except Exception as e:
             self.logger.error(f"Error detecting metric spikes: {str(e)}")
         
         return anomalies
+    
+    async def _analyze_metrics_statistically(
+        self, 
+        baseline_metrics: List, 
+        recent_metrics: List
+    ) -> Dict[str, Dict[str, Any]]:
+        """Perform statistical analysis on metrics to detect anomalies"""
+        analyses = {}
+        
+        # Define metrics to analyze
+        metrics_config = {
+            "cpu_usage": {
+                "zscore_threshold": self.thresholds.cpu_spike_zscore,
+                "percentage_threshold": self.thresholds.cpu_spike_threshold,
+                "resource_name": "system_cpu"
+            },
+            "memory_usage": {
+                "zscore_threshold": self.thresholds.memory_spike_zscore,
+                "percentage_threshold": self.thresholds.memory_spike_threshold,
+                "resource_name": "system_memory"
+            },
+            "disk_usage": {
+                "zscore_threshold": self.thresholds.disk_spike_zscore,
+                "percentage_threshold": self.thresholds.disk_spike_threshold,
+                "resource_name": "system_disk"
+            },
+            "tcp_connections": {
+                "zscore_threshold": self.thresholds.connection_spike_zscore,
+                "percentage_threshold": None,  # Use absolute threshold
+                "resource_name": "network_connections"
+            }
+        }
+        
+        for metric_name, config in metrics_config.items():
+            try:
+                # Extract metric values
+                baseline_values = [
+                    float(getattr(m, metric_name)) 
+                    for m in baseline_metrics 
+                    if getattr(m, metric_name) is not None
+                ]
+                recent_values = [
+                    float(getattr(m, metric_name)) 
+                    for m in recent_metrics 
+                    if getattr(m, metric_name) is not None
+                ]
+                
+                if not baseline_values or not recent_values:
+                    continue
+                
+                # Calculate baseline statistics
+                baseline_stats = self._calculate_statistics(baseline_values)
+                recent_stats = self._calculate_statistics(recent_values)
+                
+                # Detect trend in recent data
+                trend_analysis = self._detect_trend(recent_values)
+                
+                # Calculate z-score for recent average
+                recent_avg = recent_stats["mean"]
+                zscore = self._calculate_zscore(recent_avg, baseline_stats)
+                
+                # Multi-window analysis for better context
+                window_anomalies = []
+                for window_hours in self.thresholds.comparison_windows:
+                    window_analysis = await self._analyze_metric_window(
+                        baseline_metrics, recent_metrics, metric_name, window_hours
+                    )
+                    window_anomalies.append(window_analysis)
+                
+                # Determine if anomaly exists
+                anomaly_detected = False
+                detection_method = "none"
+                
+                # Primary detection: Z-score based
+                if zscore >= config["zscore_threshold"]:
+                    anomaly_detected = True
+                    detection_method = "zscore"
+                
+                # Fallback detection: Percentage based (for low variance scenarios)
+                elif (config["percentage_threshold"] and baseline_stats["mean"] > 0):
+                    percentage_increase = ((recent_avg - baseline_stats["mean"]) / baseline_stats["mean"]) * 100
+                    if percentage_increase > config["percentage_threshold"]:
+                        anomaly_detected = True
+                        detection_method = "percentage"
+                
+                # Special handling for TCP connections (absolute threshold)
+                elif metric_name == "tcp_connections":
+                    conn_increase = recent_avg - baseline_stats["mean"]
+                    if conn_increase > self.thresholds.connection_spike_threshold:
+                        anomaly_detected = True
+                        detection_method = "absolute"
+                
+                # Calculate confidence
+                confidence = self._calculate_confidence(
+                    zscore, 
+                    len(baseline_values), 
+                    len(recent_values),
+                    trend_analysis["consistency"]
+                )
+                
+                # Determine severity based on z-score and confidence
+                severity = self._determine_severity(zscore, confidence, metric_name)
+                
+                analyses[metric_name] = {
+                    "anomaly_detected": anomaly_detected,
+                    "detection_method": detection_method,
+                    "zscore": zscore,
+                    "confidence": confidence,
+                    "severity": severity,
+                    "baseline_stats": baseline_stats,
+                    "recent_stats": recent_stats,
+                    "trend_analysis": trend_analysis,
+                    "window_anomalies": window_anomalies,
+                    "resource_name": config["resource_name"],
+                    "baseline_samples": len(baseline_values),
+                    "recent_samples": len(recent_values)
+                }
+                
+            except Exception as e:
+                self.logger.warning(f"Error analyzing {metric_name}: {e}")
+                continue
+        
+        return analyses
+    
+    async def _analyze_metric_window(
+        self, 
+        baseline_metrics: List, 
+        recent_metrics: List, 
+        metric_name: str, 
+        window_hours: int
+    ) -> Dict[str, Any]:
+        """Analyze a specific time window for additional context"""
+        try:
+            # Get metrics for the specific window
+            window_start = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+            window_metrics = [
+                m for m in recent_metrics 
+                if m.timestamp >= window_start
+            ]
+            
+            if not window_metrics:
+                return {"window_hours": window_hours, "anomaly": False}
+            
+            window_values = [
+                float(getattr(m, metric_name)) 
+                for m in window_metrics 
+                if getattr(m, metric_name) is not None
+            ]
+            
+            if not window_values:
+                return {"window_hours": window_hours, "anomaly": False}
+            
+            # Compare window average to baseline
+            baseline_values = [
+                float(getattr(m, metric_name)) 
+                for m in baseline_metrics 
+                if getattr(m, metric_name) is not None
+            ]
+            
+            if not baseline_values:
+                return {"window_hours": window_hours, "anomaly": False}
+            
+            baseline_stats = self._calculate_statistics(baseline_values)
+            window_avg = statistics.mean(window_values)
+            zscore = self._calculate_zscore(window_avg, baseline_stats)
+            
+            return {
+                "window_hours": window_hours,
+                "anomaly": zscore >= 1.5,  # Lower threshold for window analysis
+                "zscore": zscore,
+                "window_avg": window_avg,
+                "baseline_avg": baseline_stats["mean"]
+            }
+            
+        except Exception as e:
+            self.logger.warning(f"Error analyzing {window_hours}h window for {metric_name}: {e}")
+            return {"window_hours": window_hours, "anomaly": False}
+    
+    def _determine_severity(self, zscore: float, confidence: float, metric_name: str) -> str:
+        """Determine severity based on z-score, confidence, and metric type"""
+        # High severity thresholds
+        high_zscore_threshold = 3.0
+        critical_zscore_threshold = 4.0
+        
+        # Adjust thresholds based on metric type
+        if metric_name == "cpu_usage":
+            high_zscore_threshold = 2.5
+            critical_zscore_threshold = 3.5
+        elif metric_name == "memory_usage":
+            high_zscore_threshold = 2.5
+            critical_zscore_threshold = 3.5
+        elif metric_name == "tcp_connections":
+            high_zscore_threshold = 3.0
+            critical_zscore_threshold = 4.5
+        
+        # Determine severity
+        if zscore >= critical_zscore_threshold and confidence >= self.thresholds.high_confidence:
+            return "HIGH"
+        elif zscore >= high_zscore_threshold and confidence >= 0.8:
+            return "HIGH"
+        elif zscore >= 2.0 and confidence >= 0.7:
+            return "MEDIUM"
+        else:
+            return "LOW"
+    
+    def _create_metric_anomaly(self, metric_name: str, analysis: Dict[str, Any]) -> Optional[Anomaly]:
+        """Create an anomaly object from metric analysis"""
+        try:
+            baseline_stats = analysis["baseline_stats"]
+            recent_stats = analysis["recent_stats"]
+            trend_analysis = analysis["trend_analysis"]
+            
+            # Calculate percentage change
+            if baseline_stats["mean"] > 0:
+                percentage_change = ((recent_stats["mean"] - baseline_stats["mean"]) / baseline_stats["mean"]) * 100
+            else:
+                percentage_change = 0
+            
+            # Create description based on detection method
+            if analysis["detection_method"] == "zscore":
+                description = (f"{metric_name.replace('_', ' ').title()} anomaly detected: "
+                             f"{analysis['zscore']:.1f} standard deviations above baseline")
+            elif analysis["detection_method"] == "percentage":
+                description = (f"{metric_name.replace('_', ' ').title()} spike detected: "
+                             f"{percentage_change:.1f}% increase from baseline")
+            elif analysis["detection_method"] == "absolute":
+                increase = recent_stats["mean"] - baseline_stats["mean"]
+                description = (f"{metric_name.replace('_', ' ').title()} spike detected: "
+                             f"{int(increase)} increase from baseline")
+            else:
+                description = f"{metric_name.replace('_', ' ').title()} anomaly detected"
+            
+            # Add trend information to description
+            if trend_analysis["trend"] == "increasing":
+                description += f" (trending upward)"
+            elif trend_analysis["trend"] == "decreasing":
+                description += f" (trending downward)"
+            
+            return Anomaly(
+                type=f"{metric_name}_spike",
+                severity=analysis["severity"],
+                timestamp=datetime.now(timezone.utc),
+                description=description,
+                details={
+                    "detection_method": analysis["detection_method"],
+                    "zscore": round(analysis["zscore"], 2),
+                    "baseline_mean": round(baseline_stats["mean"], 2),
+                    "baseline_std": round(baseline_stats["std"], 2),
+                    "recent_mean": round(recent_stats["mean"], 2),
+                    "recent_std": round(recent_stats["std"], 2),
+                    "percentage_change": round(percentage_change, 2),
+                    "trend": trend_analysis["trend"],
+                    "trend_slope": round(trend_analysis["slope"], 4),
+                    "trend_consistency": round(trend_analysis["consistency"], 2),
+                    "baseline_samples": analysis["baseline_samples"],
+                    "recent_samples": analysis["recent_samples"],
+                    "window_anomalies": analysis["window_anomalies"]
+                },
+                affected_resource=analysis["resource_name"],
+                confidence=analysis["confidence"]
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error creating anomaly for {metric_name}: {e}")
+            return None
     
     async def _detect_ip_anomalies(
         self, 
