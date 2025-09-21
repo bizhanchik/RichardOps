@@ -18,9 +18,6 @@ export interface ProcessedDiskData {
 
 export class DiskDataService {
   private static instance: DiskDataService;
-  private cache: Map<string, ProcessedDiskData[]> = new Map();
-  private lastFetch: Map<string, number> = new Map();
-  private readonly CACHE_DURATION = 10 * 1000; // 10 seconds for real-time updates
 
   static getInstance(): DiskDataService {
     if (!DiskDataService.instance) {

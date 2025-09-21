@@ -395,7 +395,7 @@ const createCPUChart = (
           const labelInterval = Math.max(1, Math.floor(visibleData.length / 8));
           return visibleData
             .filter((_, index) => index % labelInterval === 0 || index === visibleData.length - 1)
-            .map((point, index, filteredData) => (
+            .map((point, index) => (
               <span 
                 key={index} 
                 className="bg-gray-50 px-1 rounded text-[10px]"

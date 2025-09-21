@@ -19,10 +19,6 @@ export interface ProcessedNetworkData {
 
 export class NetworkDataService {
   private static instance: NetworkDataService;
-  private rxCache: Map<string, ProcessedNetworkData[]> = new Map();
-  private txCache: Map<string, ProcessedNetworkData[]> = new Map();
-  private lastFetch: Map<string, number> = new Map();
-  private readonly CACHE_DURATION = 10 * 1000; // 10 seconds for real-time updates
 
   static getInstance(): NetworkDataService {
     if (!NetworkDataService.instance) {
