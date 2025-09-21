@@ -510,10 +510,10 @@ class QueryTranslator:
             # General fallback for queries that don't match specific patterns
             # Return recent logs with basic filtering
             if not any([
-                "error" in query_text.lower(),
-                "warning" in query_text.lower(), 
-                "alert" in query_text.lower(),
-                any(container in query_text.lower() for container in ["nginx", "postgres", "redis", "app", "web", "db", "api"])
+                "error" in original_query.lower(),
+                "warning" in original_query.lower(), 
+                "alert" in original_query.lower(),
+                any(container in original_query.lower() for container in ["nginx", "postgres", "redis", "app", "web", "db", "api"])
             ]):
                 result = self.fetch_latest_logs(db_session, limit=50)
                 if result["success"]:
