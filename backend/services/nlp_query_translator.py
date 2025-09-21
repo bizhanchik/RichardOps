@@ -1262,7 +1262,7 @@ class QueryTranslator:
                     time_period = "1h"
             
             # Get summary from analytics service
-            summary = summary_service.get_system_summary(time_period)
+            summary = summary_service.get_system_summary(db_session, time_period)
             
             return {
                 "success": True,
@@ -1344,7 +1344,7 @@ class QueryTranslator:
                     time_period = "1h"
             
             # Get performance report from analytics service
-            performance = summary_service.get_performance_report(time_period)
+            performance = summary_service.get_performance_report(db_session, time_period)
             
             return {
                 "success": True,

@@ -4,6 +4,7 @@ import Sidebar from './solution/Sidebar';
 import Dashboard from './solution/Dashboard';
 import AskAI from './solution/AskAI';
 import Logs from './solution/Logs';
+import Analytics from './solution/Analytics';
 import { timeUtils } from '../utils/timeUtils';
 
 const Solution: React.FC = () => {
@@ -271,6 +272,8 @@ const Solution: React.FC = () => {
                 setLogCount={setLogCount}
                 setViewMode={setViewMode}
               />
+            ) : activeView === 'analytics' ? (
+              <Analytics />
             ) : (
               <AskAI sidebarOpen={sidebarOpen} />
             )}

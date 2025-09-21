@@ -78,7 +78,7 @@ class NLPQueryParser:
         # Initialize improved classifier if enabled
         if self.use_improved_classifier:
             try:
-                from improved_intent_classifier import get_improved_classifier
+                from services.improved_intent_classifier import get_improved_classifier
                 self.improved_classifier = get_improved_classifier()
             except Exception as e:
                 print(f"Warning: Could not initialize improved classifier: {e}")
@@ -221,13 +221,25 @@ class NLPQueryParser:
     
     def _classify_intent(self, query: str) -> Tuple[QueryIntent, float]:
         """Classify the intent of the query with improved domain-aware logic."""
+        # Try improved classifier first if available
+        if self.use_improved_classifier and self.improved_classifier:
+            try:
+                intent, confidence = self.improved_classifier.classify_intent(query)
+                # If improved classifier gives a confident result, use it
+                if confidence > 0.3:
+                    return intent, confidence
+            except Exception as e:
+                print(f"Warning: Improved classifier failed: {e}")
+        
+        # Fallback to keyword-based classification
+        query_lower = query.lower()
         intent_scores = {}
         
         # Calculate keyword-based scores
         for intent, keywords in self.intent_patterns.items():
             score = 0
             for keyword in keywords:
-                if keyword in query:
+                if keyword in query_lower:
                     score += 1
             
             # Normalize score
@@ -243,7 +255,18 @@ class NLPQueryParser:
             "database", "api", "service", "application", "backend", "frontend"
         ]
         
-        has_domain_context = any(term in query for term in domain_terms)
+        has_domain_context = any(term in query_lower for term in domain_terms)
+        
+        # Special handling for log queries with time patterns
+        log_time_patterns = [
+            "logs from", "logs in", "logs for", "logs during", "logs over",
+            "show logs", "get logs", "fetch logs", "display logs", "find logs"
+        ]
+        
+        if any(pattern in query_lower for pattern in log_time_patterns) or (
+            "logs" in query_lower and any(time_word in query_lower for time_word in ["hour", "day", "week", "month", "yesterday", "today", "last", "past"])
+        ):
+            return QueryIntent.SEARCH_LOGS, 0.9
         
         # If no domain context and no strong keyword matches, return unknown
         if not has_domain_context and (not intent_scores or max(intent_scores.values()) < 0.1):
@@ -251,12 +274,12 @@ class NLPQueryParser:
         
         # Apply improved heuristics with domain awareness
         if has_domain_context:
-            if "report" in query or "summary" in query:
+            if "report" in query_lower or "summary" in query_lower:
                 return QueryIntent.GENERATE_REPORT, max(intent_scores.get(QueryIntent.GENERATE_REPORT, 0), 0.8)
-            elif "alert" in query or "critical" in query or "urgent" in query:
+            elif "alert" in query_lower or "critical" in query_lower or "urgent" in query_lower:
                 return QueryIntent.SHOW_ALERTS, max(intent_scores.get(QueryIntent.SHOW_ALERTS, 0), 0.8)
-            elif ("investigate" in query or 
-                  (query.startswith(("what", "who", "where", "when", "how", "why")) and has_domain_context)):
+            elif ("investigate" in query_lower or 
+                  (query_lower.startswith(("what", "who", "where", "when", "how", "why")) and has_domain_context)):
                 return QueryIntent.INVESTIGATE, max(intent_scores.get(QueryIntent.INVESTIGATE, 0), 0.8)
         
         # Return best intent only if confidence is above threshold

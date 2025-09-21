@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Database, Clock, Container, AlertCircle, CheckCircle, Code, Terminal } from 'lucide-react';
+import { Send, Bot, User, Database, Clock, Container, AlertCircle, CheckCircle, Code, Terminal, TrendingUp, TrendingDown, Activity, Zap, Shield, Eye, BarChart3, PieChart, LineChart, AlertTriangle, Info, Lightbulb, Target, Cpu, HardDrive, Wifi, Server, Search, Filter, Download, Copy, ExternalLink } from 'lucide-react';
 
 interface LogEntry {
   id: string;
@@ -7,6 +7,26 @@ interface LogEntry {
   container: string;
   message: string;
   level?: string;
+}
+
+interface AnomalyData {
+  type: 'cpu' | 'memory' | 'disk' | 'network';
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  value: number;
+  threshold: number;
+  timestamp: string;
+  description: string;
+  recommendation?: string;
+}
+
+interface SystemHealth {
+  overall_score: number;
+  cpu_health: number;
+  memory_health: number;
+  disk_health: number;
+  network_health: number;
+  anomalies_detected: number;
+  last_updated: string;
 }
 
 interface QueryResult {
@@ -27,6 +47,10 @@ interface QueryResult {
       entities_found: number;
       processing_time_ms: number;
     };
+    anomalies?: AnomalyData[];
+    system_health?: SystemHealth;
+    insights?: string[];
+    recommendations?: string[];
   };
   processing_time_ms?: number;
   error?: string;
@@ -34,10 +58,11 @@ interface QueryResult {
 
 interface Message {
   id: string;
-  type: 'user' | 'ai';
+  type: 'user' | 'ai' | 'system';
   content: string;
   timestamp: Date;
   queryResult?: QueryResult;
+  messageType?: 'normal' | 'anomaly' | 'insight' | 'recommendation';
 }
 
 interface AskAIProps {
@@ -45,17 +70,26 @@ interface AskAIProps {
 }
 
 const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      type: 'ai',
-      content: "Hello! I'm your AI Security Assistant. I can help you understand health of your system. What would you like to know?",
-      timestamp: new Date()
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
+  const [recentAnomalies, setRecentAnomalies] = useState<AnomalyData[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Suggested queries for better UX - Updated list
+  const suggestedQueries = [
+    "🔍 Show recent error logs and stack traces",
+    "⚠️ Analyze current system anomalies and alerts",
+    "📊 Performance metrics and resource utilization",
+    "🗄️ Database connection health and query performance",
+    "🐳 Container status and orchestration health",
+    "💻 CPU, memory, and disk usage patterns",
+    "🛡️ Security incidents and threat detection",
+    "🚀 Deployment logs and pipeline status",
+    "🌐 Network latency and connectivity issues",
+    "📈 Application response times and throughput"
+  ];
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -64,6 +98,27 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Fetch real system health data
+  useEffect(() => {
+    const fetchSystemHealth = async () => {
+      try {
+        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+        const response = await fetch(`${apiBaseUrl}/api/system/health`);
+        if (response.ok) {
+          const health = await response.json();
+          setSystemHealth(health);
+        }
+      } catch (error) {
+        console.error('Error fetching system health:', error);
+        // Don't set mock data, just leave it null
+      }
+    };
+
+    fetchSystemHealth();
+    const interval = setInterval(fetchSystemHealth, 30000); // Update every 30 seconds
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isLoading) return;
@@ -97,34 +152,41 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
 
       const result = await response.json();
       
-      // Create AI response with query result (only if there are results to show)
-       if (result.result?.results && result.result.results.length > 0) {
-         const aiResponse: Message = {
-           id: (Date.now() + 1).toString(),
-           type: 'ai',
-           content: '', // No content needed, only showing results
-           timestamp: new Date(),
-           queryResult: result
-         };
-         setMessages(prev => [...prev, aiResponse]);
-       }
+      // Enhanced AI response with analytics and insights
+      const aiResponse: Message = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: generateEnhancedResponse(result, userQuery),
+        timestamp: new Date(),
+        queryResult: result,
+        messageType: determineMessageType(result)
+      };
+
+      setMessages(prev => [...prev, aiResponse]);
+
+      // Add system insights if anomalies detected
+      if (result.result?.anomalies && result.result.anomalies.length > 0) {
+        setTimeout(() => {
+          const insightMessage: Message = {
+            id: (Date.now() + 2).toString(),
+            type: 'system',
+            content: generateAnomalyInsights(result.result.anomalies),
+            timestamp: new Date(),
+            messageType: 'insight'
+          };
+          setMessages(prev => [...prev, insightMessage]);
+        }, 1000);
+      }
+
     } catch (error) {
       console.error('Error calling NLP API:', error);
       
-      // Create error response
       const errorResponse: Message = {
         id: (Date.now() + 1).toString(),
         type: 'ai',
-        content: `I encountered an error while processing your query: ${error instanceof Error ? error.message : 'Unknown error'}. Please make sure the backend server is running on localhost:8000.`,
+        content: `🚨 I encountered an error while processing your query: ${error instanceof Error ? error.message : 'Unknown error'}. Please make sure the backend server is running.`,
         timestamp: new Date(),
-        queryResult: {
-          query_type: 'error',
-          method_called: 'N/A',
-          parameters: {},
-          execution_time: 0,
-          total_results: 0,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }
+        messageType: 'normal'
       };
 
       setMessages(prev => [...prev, errorResponse]);
@@ -133,18 +195,61 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     }
   };
 
-  const generateResponseContent = (result: QueryResult): string => {
+  const generateEnhancedResponse = (result: QueryResult, query: string): string => {
     if (!result.success || result.error) {
-      return `I encountered an error: ${result.error || 'Unknown error occurred'}`;
+      return `🚨 I encountered an error: ${result.error || 'Unknown error occurred'}`;
     }
 
     const totalResults = result.result?.count || 0;
+    const intent = result.result?.metadata?.intent || 'unknown';
     
     if (totalResults === 0) {
-      return `No results found.`;
+      return `🔍 No results found for your query. Try asking about system metrics, logs, or performance data.`;
     }
 
-    return `Here are your results:`;
+    // Generate contextual responses based on intent
+    switch (intent) {
+      case 'analytics_anomalies':
+        return `🚨 Found ${totalResults} anomalies in your system. Let me analyze these for you...`;
+      case 'analytics_performance':
+        return `📊 Here's your performance analysis with ${totalResults} data points:`;
+      case 'analytics_metrics':
+        return `📈 Current system metrics (${totalResults} metrics collected):`;
+      case 'analytics_summary':
+        return `📋 System summary report with ${totalResults} key insights:`;
+      default:
+        return `✅ Found ${totalResults} results for your query:`;
+    }
+  };
+
+  const determineMessageType = (result: QueryResult): 'normal' | 'anomaly' | 'insight' | 'recommendation' => {
+    if (result.result?.anomalies && result.result.anomalies.length > 0) {
+      return 'anomaly';
+    }
+    if (result.result?.insights && result.result.insights.length > 0) {
+      return 'insight';
+    }
+    if (result.result?.recommendations && result.result.recommendations.length > 0) {
+      return 'recommendation';
+    }
+    return 'normal';
+  };
+
+  const generateAnomalyInsights = (anomalies: AnomalyData[]): string => {
+    const criticalCount = anomalies.filter(a => a.severity === 'critical').length;
+    const highCount = anomalies.filter(a => a.severity === 'high').length;
+    
+    if (criticalCount > 0) {
+      return `🚨 CRITICAL: Detected ${criticalCount} critical anomalies requiring immediate attention! ${highCount > 0 ? `Also found ${highCount} high-priority issues.` : ''}`;
+    } else if (highCount > 0) {
+      return `⚠️ HIGH PRIORITY: Found ${highCount} high-priority anomalies that should be investigated soon.`;
+    } else {
+      return `ℹ️ MONITORING: Detected ${anomalies.length} minor anomalies. System is generally stable.`;
+    }
+  };
+
+  const handleSuggestedQuery = (query: string) => {
+    setInputValue(query);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -152,6 +257,395 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
       e.preventDefault();
       handleSendMessage();
     }
+  };
+
+  const getMessageIcon = (message: Message) => {
+    switch (message.type) {
+      case 'user':
+        return <User className="w-6 h-6 text-black" />;
+      case 'system':
+        return <Shield className="w-6 h-6 text-orange-500" />;
+      default:
+        switch (message.messageType) {
+          case 'anomaly':
+            return <AlertTriangle className="w-6 h-6 text-red-500" />;
+          case 'insight':
+            return <Lightbulb className="w-6 h-6 text-yellow-500" />;
+          case 'recommendation':
+            return <Target className="w-6 h-6 text-green-500" />;
+          default:
+            return <Bot className="w-6 h-6 text-neon-purple-500" />;
+        }
+    }
+  };
+
+  const getMessageBorderColor = (message: Message) => {
+    switch (message.messageType) {
+      case 'anomaly':
+        return 'border-l-red-500';
+      case 'insight':
+        return 'border-l-yellow-500';
+      case 'recommendation':
+        return 'border-l-green-500';
+      default:
+        return message.type === 'user' ? 'border-l-blue-500' : 'border-l-purple-500';
+    }
+  };
+
+  const renderSystemHealthWidget = () => {
+    if (!systemHealth) return null;
+
+    const getHealthColor = (score: number) => {
+      if (score >= 90) return 'text-neon-green-500';
+      if (score >= 70) return 'text-yellow-400';
+      return 'text-red-400';
+    };
+
+    const getHealthIcon = (score: number) => {
+      if (score >= 90) return <CheckCircle className="w-4 h-4" />;
+      if (score >= 70) return <AlertCircle className="w-4 h-4" />;
+      return <AlertTriangle className="w-4 h-4" />;
+    };
+
+    return (
+      <div className="bg-dark-card rounded-xl border border-gray-700 overflow-hidden">
+        <div className="bg-gradient-to-r from-neon-purple-500/10 to-neon-green-500/10 p-4 border-b border-gray-700">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-neon-green-500/20 rounded-lg">
+                <Activity className="w-5 h-5 text-neon-green-500" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-text-primary">System Health</h3>
+                <p className="text-sm text-text-muted">Real-time monitoring dashboard</p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-neon-green-500 rounded-full animate-pulse"></div>
+                <span className="text-sm font-medium text-neon-green-500">LIVE</span>
+              </div>
+              <div className={`flex items-center gap-1 ${getHealthColor(systemHealth.overall_score)}`}>
+                {getHealthIcon(systemHealth.overall_score)}
+                <span className="font-bold">{systemHealth.overall_score}%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="p-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="group bg-dark-surface hover:bg-dark-bg rounded-lg p-4 border border-gray-700 hover:border-neon-purple-500/50 transition-all duration-200">
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-2 bg-neon-purple-500/20 rounded-lg group-hover:bg-neon-purple-500/30 transition-colors">
+                  <Cpu className="w-5 h-5 text-neon-purple-500" />
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-bold text-text-primary">{systemHealth.cpu_health}%</div>
+                  <div className="text-xs text-text-muted">CPU Usage</div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <span className="text-text-muted">Current</span>
+                  <span className={`font-medium ${getHealthColor(systemHealth.cpu_health)}`}>
+                    {systemHealth.cpu_health > 80 ? 'High' : systemHealth.cpu_health > 60 ? 'Medium' : 'Normal'}
+                  </span>
+                </div>
+                <div className="bg-gray-700 rounded-full h-2 overflow-hidden">
+                  <div 
+                    className={`h-2 rounded-full transition-all duration-500 ${
+                      systemHealth.cpu_health > 80 ? 'bg-gradient-to-r from-red-500 to-red-400' :
+                      systemHealth.cpu_health > 60 ? 'bg-gradient-to-r from-yellow-500 to-yellow-400' :
+                      'bg-gradient-to-r from-neon-purple-500 to-neon-green-500'
+                    }`}
+                    style={{ width: `${systemHealth.cpu_health}%` }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="group bg-dark-surface hover:bg-dark-bg rounded-lg p-4 border border-gray-700 hover:border-neon-green-500/50 transition-all duration-200">
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-2 bg-neon-green-500/20 rounded-lg group-hover:bg-neon-green-500/30 transition-colors">
+                  <Database className="w-5 h-5 text-neon-green-500" />
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-bold text-text-primary">{systemHealth.memory_health}%</div>
+                  <div className="text-xs text-text-muted">Memory</div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <span className="text-text-muted">Available</span>
+                  <span className={`font-medium ${getHealthColor(systemHealth.memory_health)}`}>
+                    {systemHealth.memory_health > 85 ? 'Critical' : systemHealth.memory_health > 70 ? 'Warning' : 'Healthy'}
+                  </span>
+                </div>
+                <div className="bg-gray-700 rounded-full h-2 overflow-hidden">
+                  <div 
+                    className={`h-2 rounded-full transition-all duration-500 ${
+                      systemHealth.memory_health > 85 ? 'bg-gradient-to-r from-red-500 to-red-400' :
+                      systemHealth.memory_health > 70 ? 'bg-gradient-to-r from-yellow-500 to-yellow-400' :
+                      'bg-gradient-to-r from-neon-green-500 to-neon-purple-500'
+                    }`}
+                    style={{ width: `${systemHealth.memory_health}%` }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="group bg-dark-surface hover:bg-dark-bg rounded-lg p-4 border border-gray-700 hover:border-blue-500/50 transition-all duration-200">
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-2 bg-blue-500/20 rounded-lg group-hover:bg-blue-500/30 transition-colors">
+                  <HardDrive className="w-5 h-5 text-blue-400" />
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-bold text-text-primary">{systemHealth.disk_health}%</div>
+                  <div className="text-xs text-text-muted">Disk</div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <span className="text-text-muted">Free Space</span>
+                  <span className={`font-medium ${getHealthColor(systemHealth.disk_health)}`}>
+                    {systemHealth.disk_health > 80 ? 'Good' : systemHealth.disk_health > 60 ? 'Low' : 'Critical'}
+                  </span>
+                </div>
+                <div className="bg-gray-700 rounded-full h-2 overflow-hidden">
+                  <div 
+                    className="bg-gradient-to-r from-blue-500 to-blue-400 h-2 rounded-full transition-all duration-500"
+                    style={{ width: `${systemHealth.disk_health}%` }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="group bg-dark-surface hover:bg-dark-bg rounded-lg p-4 border border-gray-700 hover:border-orange-500/50 transition-all duration-200">
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-2 bg-orange-500/20 rounded-lg group-hover:bg-orange-500/30 transition-colors">
+                  <Wifi className="w-5 h-5 text-orange-400" />
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-bold text-text-primary">{systemHealth.network_health}%</div>
+                  <div className="text-xs text-text-muted">Network</div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <span className="text-text-muted">Latency: 12ms</span>
+                  <span className="font-medium text-neon-green-500">Optimal</span>
+                </div>
+                <div className="bg-gray-700 rounded-full h-2 overflow-hidden">
+                  <div 
+                    className="bg-gradient-to-r from-orange-500 to-orange-400 h-2 rounded-full transition-all duration-500"
+                    style={{ width: `${systemHealth.network_health}%` }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          {/* Quick Stats Row */}
+          <div className="mt-4 pt-4 border-t border-gray-700">
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-1">
+                  <div className="w-2 h-2 bg-neon-green-500 rounded-full"></div>
+                  <span className="text-text-muted">Uptime: 99.9%</span>
+                </div>
+                {systemHealth.anomalies_detected > 0 ? (
+                  <div className="flex items-center space-x-1">
+                    <AlertTriangle className="w-3 h-3 text-red-400" />
+                    <span className="text-red-400 font-medium">{systemHealth.anomalies_detected} Anomalies</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-1">
+                    <CheckCircle className="w-3 h-3 text-neon-green-500" />
+                    <span className="text-text-muted">No Issues</span>
+                  </div>
+                )}
+              </div>
+              <button className="text-xs text-neon-purple-500 hover:text-neon-purple-400 transition-colors">
+                View Details →
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderQueryResult = (result: QueryResult) => {
+    if (!result.success || !result.result) return null;
+
+    return (
+      <div className="mt-4 space-y-4">
+        {/* Anomalies Section */}
+        {result.result.anomalies && result.result.anomalies.length > 0 && (
+          <div className="bg-gradient-to-r from-red-50 to-red-100 rounded-xl p-6 border-l-4 border-red-500 shadow-sm">
+            <h4 className="font-bold text-red-800 mb-4 flex items-center gap-3 text-lg">
+              <div className="p-2 bg-red-500 rounded-lg">
+                <AlertTriangle className="w-5 h-5 text-white" />
+              </div>
+              Critical Anomalies Detected
+              <span className="bg-red-500 text-white px-3 py-1 rounded-full text-sm font-medium">
+                {result.result.anomalies.length}
+              </span>
+            </h4>
+            <div className="grid gap-4">
+              {result.result.anomalies.map((anomaly, index) => (
+                <div key={index} className="bg-white rounded-lg p-4 border border-red-200 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-3 h-3 rounded-full ${
+                        anomaly.severity === 'critical' ? 'bg-red-500 animate-pulse' :
+                        anomaly.severity === 'high' ? 'bg-orange-500' :
+                        anomaly.severity === 'medium' ? 'bg-yellow-500' : 'bg-blue-500'
+                      }`} />
+                      <span className="font-semibold text-gray-800 capitalize text-lg">{anomaly.type}</span>
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${
+                        anomaly.severity === 'critical' ? 'bg-red-100 text-red-800 border border-red-300' :
+                        anomaly.severity === 'high' ? 'bg-orange-100 text-orange-800 border border-orange-300' :
+                        anomaly.severity === 'medium' ? 'bg-yellow-100 text-yellow-800 border border-yellow-300' : 
+                        'bg-blue-100 text-blue-800 border border-blue-300'
+                      }`}>
+                        {anomaly.severity}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm text-gray-500">Current / Threshold</div>
+                      <div className="font-bold text-gray-800">{anomaly.value} / {anomaly.threshold}</div>
+                    </div>
+                  </div>
+                  <p className="text-gray-700 mb-3 leading-relaxed">{anomaly.description}</p>
+                  {anomaly.recommendation && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <div className="flex items-start gap-2">
+                        <Lightbulb className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                        <div>
+                          <div className="font-medium text-blue-800 text-sm">Recommendation</div>
+                          <div className="text-blue-700 text-sm">{anomaly.recommendation}</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Regular Results */}
+        {result.result.results && result.result.results.length > 0 && (
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border-l-4 border-blue-500 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="font-bold text-blue-800 flex items-center gap-3 text-lg">
+                <div className="p-2 bg-blue-500 rounded-lg">
+                  <Database className="w-5 h-5 text-white" />
+                </div>
+                Query Results
+                <span className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm font-medium">
+                  {result.result.count}
+                </span>
+              </h4>
+              {result.result.metadata && (
+                <div className="bg-white rounded-lg px-4 py-2 border border-blue-200">
+                  <div className="text-xs text-blue-600 font-medium">
+                    ⚡ {result.result.metadata.processing_time_ms}ms • 
+                    🎯 {(result.result.metadata.confidence * 100).toFixed(1)}% confidence
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            <div className="max-h-80 overflow-y-auto space-y-3 pr-2">
+              {result.result.results.slice(0, 10).map((item: any, index: number) => (
+                <div key={index} className="bg-white rounded-lg p-4 border border-blue-200 shadow-sm hover:shadow-md transition-all hover:border-blue-300">
+                  {typeof item === 'object' ? (
+                    <div className="space-y-2">
+                      {Object.entries(item).map(([key, value]) => (
+                        <div key={key} className="flex justify-between items-center py-1">
+                          <span className="text-gray-600 capitalize font-medium text-sm">{key.replace(/_/g, ' ')}:</span>
+                          <span className="font-mono text-sm bg-gray-100 px-2 py-1 rounded text-gray-800 max-w-xs truncate">
+                            {String(value)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="font-mono text-sm bg-gray-100 p-3 rounded border text-gray-800">
+                      {String(item)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            
+            {result.result.results.length > 10 && (
+              <div className="mt-4 text-center">
+                <div className="inline-flex items-center gap-2 bg-white border border-blue-200 rounded-lg px-4 py-2 text-blue-700">
+                  <Eye className="w-4 h-4" />
+                  <span className="text-sm font-medium">
+                    Showing 10 of {result.result.results.length} results
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Insights Section */}
+        {result.result.insights && result.result.insights.length > 0 && (
+          <div className="bg-gradient-to-r from-yellow-50 to-amber-50 rounded-xl p-6 border-l-4 border-yellow-500 shadow-sm">
+            <h4 className="font-bold text-yellow-800 mb-4 flex items-center gap-3 text-lg">
+              <div className="p-2 bg-yellow-500 rounded-lg">
+                <Lightbulb className="w-5 h-5 text-white" />
+              </div>
+              AI Insights
+              <span className="bg-yellow-500 text-white px-3 py-1 rounded-full text-sm font-medium">
+                {result.result.insights.length}
+              </span>
+            </h4>
+            <div className="space-y-3">
+              {result.result.insights.map((insight, index) => (
+                <div key={index} className="bg-white rounded-lg p-4 border border-yellow-200 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <div className="w-2 h-2 bg-yellow-500 rounded-full mt-2 flex-shrink-0"></div>
+                    <p className="text-yellow-800 leading-relaxed">{insight}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Recommendations Section */}
+        {result.result.recommendations && result.result.recommendations.length > 0 && (
+          <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-6 border-l-4 border-green-500 shadow-sm">
+            <h4 className="font-bold text-green-800 mb-4 flex items-center gap-3 text-lg">
+              <div className="p-2 bg-green-500 rounded-lg">
+                <Target className="w-5 h-5 text-white" />
+              </div>
+              Recommendations
+              <span className="bg-green-500 text-white px-3 py-1 rounded-full text-sm font-medium">
+                {result.result.recommendations.length}
+              </span>
+            </h4>
+            <div className="space-y-3">
+              {result.result.recommendations.map((rec, index) => (
+                <div key={index} className="bg-white rounded-lg p-4 border border-green-200 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></div>
+                    <p className="text-green-800 leading-relaxed">{rec}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   const formatTime = (date: Date) => {
@@ -184,12 +678,19 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
 
   const formatLogTimestamp = (timestamp: string): string => {
     const date = new Date(timestamp);
-    return date.toLocaleString('en-US', {
-      month: '2-digit',
-      day: '2-digit',
+    return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
+      hour12: false
+    });
+  };
+
+  const formatTimestamp = (timestamp: string): string => {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
       hour12: false
     });
   };
@@ -200,65 +701,110 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
       new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
 
+    const getLogLevelColor = (level: string) => {
+      const levelColors = {
+        'ERROR': 'text-red-400',
+        'WARN': 'text-yellow-400',
+        'WARNING': 'text-yellow-400',
+        'INFO': 'text-blue-400',
+        'DEBUG': 'text-gray-400',
+      };
+      return levelColors[level as keyof typeof levelColors] || 'text-gray-400';
+    };
+
+    const getLogLevelBg = (level: string) => {
+      const levelBgs = {
+        'ERROR': 'bg-red-500/20 border border-red-500/30',
+        'WARN': 'bg-yellow-500/20 border border-yellow-500/30',
+        'WARNING': 'bg-yellow-500/20 border border-yellow-500/30',
+        'INFO': 'bg-blue-500/20 border border-blue-500/30',
+        'DEBUG': 'bg-gray-500/20 border border-gray-500/30',
+      };
+      return levelBgs[level as keyof typeof levelBgs] || 'bg-gray-500/20 border border-gray-500/30';
+    };
+
+    const highlightLogMessage = (message: string) => {
+      // Clean up timestamp prefixes
+      const cleanMessage = message.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s+/, '').replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+/, '');
+      return cleanMessage;
+    };
+
     return (
-      <div className="bg-gray-900 border border-gray-700 rounded-lg overflow-hidden">
-        <div className="bg-gray-800 px-4 py-2 border-b border-gray-700">
-          <div className="flex items-center space-x-2">
-            <Terminal className="w-4 h-4 text-green-400" />
-            <span className="text-green-400 font-mono text-sm">Container Logs</span>
-            <span className="text-gray-400 text-xs">({logs.length} entries)</span>
+      <div className="bg-dark-bg rounded-xl border border-gray-700 overflow-hidden shadow-lg">
+        <div className="bg-gradient-to-r from-dark-surface to-dark-card px-4 py-3 border-b border-gray-700">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="p-1.5 bg-neon-green-500/20 rounded-lg">
+                <Terminal className="w-4 h-4 text-neon-green-500" />
+              </div>
+              <div>
+                <span className="text-neon-green-500 font-mono text-sm font-medium">Container Logs</span>
+                <span className="text-text-muted text-xs ml-2">({logs.length} entries)</span>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2">
+              <button className="p-1.5 hover:bg-dark-card rounded-lg transition-colors">
+                <Copy className="w-3 h-3 text-text-muted" />
+              </button>
+              <button className="p-1.5 hover:bg-dark-card rounded-lg transition-colors">
+                <Download className="w-3 h-3 text-text-muted" />
+              </button>
+              <button className="p-1.5 hover:bg-dark-card rounded-lg transition-colors">
+                <Filter className="w-3 h-3 text-text-muted" />
+              </button>
+            </div>
           </div>
         </div>
         
         <div className="max-h-96 overflow-y-auto">
-          {sortedLogs.map((log, index) => {
-            const logLevel = extractLogLevel(log.message);
-            const levelColors = {
-              'ERROR': 'text-red-400',
-              'WARN': 'text-yellow-400',
-              'WARNING': 'text-yellow-400',
-              'INFO': 'text-blue-400',
-              'DEBUG': 'text-gray-400',
-            };
-            const levelColor = levelColors[logLevel as keyof typeof levelColors] || 'text-gray-400';
-            
-            return (
-              <div key={log.id || index} className="border-b border-gray-800 last:border-b-0">
-                <div className="px-4 py-2 hover:bg-gray-800 transition-colors">
-                  <div className="flex items-start space-x-3 font-mono text-xs">
-                    {/* Timestamp */}
-                    <span className="text-gray-500 flex-shrink-0 w-20">
-                      {formatLogTimestamp(log.timestamp)}
-                    </span>
-                    
-                    {/* Container */}
-                    <span className="text-cyan-400 flex-shrink-0 w-24 truncate">
-                      {log.container.replace('/repathon-', '').replace('-1', '')}
-                    </span>
-                    
-                    {/* Log Level */}
-                    <span className={`${levelColor} flex-shrink-0 w-12`}>
-                      [{logLevel}]
-                    </span>
-                    
-                    {/* Message */}
-                    <span className="text-gray-300 flex-1 leading-relaxed">
-                      {log.message.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s+/, '').replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+/, '')}
-                    </span>
-                  </div>
+          <div className="p-2 space-y-0.5 font-mono text-sm">
+            {sortedLogs.map((log, index) => {
+              const logLevel = extractLogLevel(log.message);
+              const levelColor = getLogLevelColor(logLevel);
+              const levelBg = getLogLevelBg(logLevel);
+              
+              return (
+                <div 
+                  key={log.id || index} 
+                  className="group flex items-start space-x-3 hover:bg-dark-surface/50 px-3 py-2 rounded-lg transition-colors cursor-pointer border-l-2 border-transparent hover:border-neon-purple-500/30"
+                >
+                  <span className="text-text-muted text-xs w-20 flex-shrink-0 font-medium">
+                    {formatLogTimestamp(log.timestamp)}
+                  </span>
+                  <span className={`text-xs w-16 flex-shrink-0 font-bold px-2 py-0.5 rounded ${levelColor} ${levelBg}`}>
+                    {logLevel}
+                  </span>
+                  <span className="text-neon-purple-500 text-xs w-28 flex-shrink-0 truncate font-medium bg-neon-purple-500/10 px-2 py-0.5 rounded">
+                    {log.container.replace('/repathon-', '').replace('-1', '')}
+                  </span>
+                  <span className="text-text-primary flex-1 break-words group-hover:text-white transition-colors">
+                    {highlightLogMessage(log.message)}
+                  </span>
+                  <button className="opacity-0 group-hover:opacity-100 p-1 hover:bg-dark-card rounded transition-all">
+                    <ExternalLink className="w-3 h-3 text-text-muted" />
+                  </button>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
         
-        {logs.length > 20 && (
-          <div className="bg-gray-800 px-4 py-2 border-t border-gray-700">
-            <span className="text-gray-400 text-xs">
-              Showing latest {Math.min(logs.length, 20)} entries • Use filters to narrow results
-            </span>
+        <div className="bg-dark-surface px-4 py-2 border-t border-gray-700">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center space-x-4">
+              <span className="text-text-muted">
+                Showing {logs.length} of {logs.length} entries
+              </span>
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-neon-green-500 rounded-full animate-pulse"></div>
+                <span className="text-neon-green-500 font-medium">Live</span>
+              </div>
+            </div>
+            <button className="text-neon-purple-500 hover:text-neon-purple-400 transition-colors">
+              View Full Logs →
+            </button>
           </div>
-        )}
+        </div>
       </div>
     );
   };
@@ -288,253 +834,246 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     const queryType = queryResult.result?.metadata?.intent || 'unknown';
     const executionTime = queryResult.processing_time_ms || 0;
     const totalResults = queryResult.result?.count || 0;
-    const parameters = queryResult.result?.query_info?.parameters || {};
-    const dataSource = queryResult.result?.data_source || 'unknown';
-
+  
     return (
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 mb-4">
-        <div className="flex items-center space-x-2 mb-3">
-          <Code className="w-4 h-4 text-blue-600" />
-          <h4 className="font-semibold text-blue-900">Query Execution Details</h4>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
-          <div className="bg-white rounded-lg p-3 border border-blue-100">
-            <div className="flex items-center space-x-2 mb-1">
-              <Terminal className="w-3 h-3 text-green-600" />
-              <span className="text-xs font-medium text-gray-600">METHOD CALLED</span>
-            </div>
-            <code className="text-sm font-mono text-green-700 bg-green-50 px-2 py-1 rounded">
-              {methodCalled}
-            </code>
-          </div>
-          
-          <div className="bg-white rounded-lg p-3 border border-blue-100">
-            <div className="flex items-center space-x-2 mb-1">
-              <Database className="w-3 h-3 text-purple-600" />
-              <span className="text-xs font-medium text-gray-600">QUERY INTENT</span>
-            </div>
-            <span className="text-sm font-semibold text-purple-700 bg-purple-50 px-2 py-1 rounded">
-              {queryType}
+      <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-3 text-sm">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <span className="text-blue-700 flex items-center gap-1">
+              <Code className="w-4 h-4" />
+              <span className="font-medium">{methodCalled}</span>
             </span>
+            <span className="text-gray-700">
+              Intent: <span className="font-semibold text-purple-700">{queryType}</span>
+            </span>
+          </div>
+          <div className="flex items-center gap-4 text-gray-600">
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              {executionTime.toFixed(0)}ms
+            </span>
+            <span className="font-medium text-green-700">{totalResults} results</span>
           </div>
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
-          <div className="bg-white rounded-lg p-3 border border-blue-100">
-            <div className="flex items-center space-x-2 mb-1">
-              <Clock className="w-3 h-3 text-orange-600" />
-              <span className="text-xs font-medium text-gray-600">EXECUTION TIME</span>
-            </div>
-            <span className="text-sm font-mono text-orange-700">
-              {executionTime.toFixed(2)}ms
-            </span>
-          </div>
-          
-          <div className="bg-white rounded-lg p-3 border border-blue-100">
-            <div className="flex items-center space-x-2 mb-1">
-              {totalResults > 0 ? (
-                <CheckCircle className="w-3 h-3 text-green-600" />
-              ) : (
-                <AlertCircle className="w-3 h-3 text-yellow-600" />
-              )}
-              <span className="text-xs font-medium text-gray-600">RESULTS FOUND</span>
-            </div>
-            <span className="text-sm font-semibold text-gray-700">
-              {totalResults.toLocaleString()}
-            </span>
-          </div>
-        </div>
-
-        {dataSource && (
-          <div className="bg-white rounded-lg p-3 border border-blue-100 mb-3">
-            <div className="flex items-center space-x-2 mb-1">
-              <Database className="w-3 h-3 text-blue-600" />
-              <span className="text-xs font-medium text-gray-600">DATA SOURCE</span>
-            </div>
-            <span className="text-sm font-semibold text-blue-700 bg-blue-50 px-2 py-1 rounded">
-              {dataSource}
-            </span>
-          </div>
-        )}
-
-        {Object.keys(parameters).length > 0 && (
-          <div className="bg-white rounded-lg p-3 border border-blue-100">
-            <div className="flex items-center space-x-2 mb-2">
-              <Code className="w-3 h-3 text-indigo-600" />
-              <span className="text-xs font-medium text-gray-600">PARAMETERS</span>
-            </div>
-            <pre className="text-xs font-mono text-indigo-700 bg-indigo-50 p-2 rounded overflow-x-auto">
-              {JSON.stringify(parameters, null, 2)}
-            </pre>
-          </div>
-        )}
       </div>
     );
   };
 
   const suggestedQuestions = [
     "show me recent logs",
-    "backend container logs",
+    "backend container logs", 
     "logs from last hour",
-    "error logs today",
-    "container logs with high severity",
-    "show me all containers"
+    "error logs today"
   ];
 
   return (
-    <div className="h-full flex flex-col relative">
-      {/* Messages Area - Centered with responsive padding */}
-      <div className="flex-1 overflow-y-auto pt-24 pb-32 space-y-6">
-        <div className="max-w-3xl mx-auto px-4 space-y-6">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div className={`flex max-w-[85%] ${message.type === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start space-x-3`}>
-                {message.type === 'user' ? (
-                  <>
-                    {/* Avatar */}
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-emerald-600 text-white ml-3">
-                      <User className="w-4 h-4" />
+    <div className="flex flex-col h-full bg-dark-bg text-text-primary">
+      {/* Header with System Health */}
+      <div className="bg-dark-surface border-b border-gray-800 p-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 bg-gradient-neon rounded-lg">
+              <Terminal className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-text-primary">Log Analysis Assistant</h1>
+              <p className="text-sm text-text-muted">AI-powered monitoring and log analysis</p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            <button className="p-2 hover:bg-dark-card rounded-lg transition-colors">
+              <Filter className="w-5 h-5 text-text-muted" />
+            </button>
+            <button className="p-2 hover:bg-dark-card rounded-lg transition-colors">
+              <Download className="w-5 h-5 text-text-muted" />
+            </button>
+          </div>
+        </div>
+        {renderSystemHealthWidget()}
+      </div>
+
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-6" ref={messagesEndRef}>
+        {messages.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="inline-flex p-4 bg-dark-surface rounded-full mb-4">
+              <Bot className="w-12 h-12 text-neon-purple-500" />
+            </div>
+            <h2 className="text-2xl font-bold text-text-primary mb-2">Welcome to Log Analysis</h2>
+            <p className="text-text-muted mb-8 max-w-md mx-auto">
+              Ask me anything about your system logs, performance metrics, or anomalies. 
+              I'll help you analyze and understand your monitoring data.
+            </p>
+            
+            {/* Quick Actions */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-w-4xl mx-auto">
+              {suggestedQueries.slice(0, 6).map((query, index) => (
+                <button
+                  key={index}
+                  onClick={() => handleSuggestedQuery(query)}
+                  className="group p-4 bg-dark-surface hover:bg-dark-card border border-gray-700 hover:border-neon-purple-500 rounded-xl transition-all duration-200 text-left"
+                >
+                  <div className="flex items-start space-x-3">
+                    <div className="text-2xl">{query.split(' ')[0]}</div>
+                    <div>
+                      <div className="text-text-primary font-medium group-hover:text-neon-purple-500 transition-colors">
+                        {query.substring(2)}
+                      </div>
                     </div>
-                    
-                    {/* Message Bubble */}
-                    <div className="rounded-2xl px-4 py-3 bg-emerald-600 text-white">
-                      <p className="text-sm leading-relaxed">{message.content}</p>
-                      <p className="text-xs mt-2 text-emerald-100">
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          messages.map((message) => (
+            <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] ${
+                message.type === 'user' 
+                  ? 'bg-gradient-purple text-white shadow-purple-500/20' 
+                  : 'bg-dark-surface border border-gray-700'
+              } rounded-xl p-5 shadow-lg`}>
+                <div className="flex items-start space-x-4">
+                  <div className="flex-shrink-0">
+                    <div className={`p-2 rounded-lg ${
+                      message.type === 'user' 
+                        ? 'bg-white/90' 
+                        : 'bg-neon-purple-500/20'
+                    }`}>
+                      {getMessageIcon(message)}
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className={`text-sm font-medium ${
+                        message.type === 'user' ? 'text-black/80' : 'text-text-muted'
+                      }`}>
+                        {message.type === 'user' ? 'You' : 'AI Assistant'}
+                      </div>
+                      <div className={`text-xs ${
+                        message.type === 'user' ? 'text-black/60' : 'text-text-muted'
+                      }`}>
                         {formatTime(message.timestamp)}
-                      </p>
+                      </div>
                     </div>
-                  </>
-                ) : (
-                  /* AI message - only show query results, no chat bubble */
-                  message.queryResult && (
-                    <div className="w-full max-w-4xl">
-                      {message.queryResult.result?.results && message.queryResult.result.results.length > 0 && (
-                      <div className="mt-4">
-                        {/* Check if results look like logs (have timestamp, container, message fields) */}
-                        {message.queryResult.result.results[0]?.timestamp && 
-                         message.queryResult.result.results[0]?.container && 
-                         message.queryResult.result.results[0]?.message ? (
-                          <TerminalLogDisplay logs={message.queryResult.result.results} />
-                        ) : (
-                          /* Fallback to JSON display for non-log results */
-                          <div className="bg-white border border-gray-200 rounded-lg p-4">
-                            <div className="flex items-center space-x-2 mb-4">
-                              <Terminal className="w-4 h-4 text-gray-600" />
-                              <h4 className="font-semibold text-gray-900">
-                                Query Results ({message.queryResult.result.results.length})
-                              </h4>
-                            </div>
-                            
-                            <div className="max-h-96 overflow-y-auto space-y-2">
-                              {message.queryResult.result.results.slice(0, 10).map((result, index) => (
-                                <div key={index} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                                  <pre className="text-xs font-mono text-gray-700 overflow-x-auto whitespace-pre-wrap">
-                                    {JSON.stringify(result, null, 2)}
-                                  </pre>
-                                </div>
-                              ))}
-                              
-                              {message.queryResult.result.results.length > 10 && (
-                                <div className="text-center py-2">
-                                  <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-                                    ... and {message.queryResult.result.results.length - 10} more entries
-                                  </span>
+                    <div className={message.type === 'user' ? 'text-black font-medium' : 'text-text-primary'}>
+                      {message.type === 'user' ? (
+                        <span className="text-black">{message.content}</span>
+                      ) : (
+                        <div className="space-y-4">
+                          {message.queryResult && <MethodCallComponent queryResult={message.queryResult} />}
+                          {message.queryResult && renderQueryResult(message.queryResult)}
+                          {message.queryResult?.result?.results && message.queryResult.result.results.length > 0 && (
+                            <div>
+                              {message.queryResult.result.results[0]?.timestamp && 
+                               message.queryResult.result.results[0]?.container && 
+                               message.queryResult.result.results[0]?.message ? (
+                                <TerminalLogDisplay logs={message.queryResult.result.results} />
+                              ) : (
+                                <div className="bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg p-4">
+                                  <div className="flex items-center space-x-2 mb-4">
+                                    <Terminal className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                                    <h4 className="font-semibold text-gray-900 dark:text-gray-100">
+                                      Query Results ({message.queryResult.result.results.length})
+                                    </h4>
+                                  </div>
+                                  <div className="max-h-96 overflow-y-auto space-y-2">
+                                    {message.queryResult.result.results.slice(0, 10).map((result, index) => (
+                                      <div key={index} className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                                        <pre className="text-xs font-mono text-gray-700 dark:text-gray-300 overflow-x-auto whitespace-pre-wrap">
+                                          {JSON.stringify(result, null, 2)}
+                                        </pre>
+                                      </div>
+                                    ))}
+                                    {message.queryResult.result.results.length > 10 && (
+                                      <div className="text-center py-2">
+                                        <span className="text-sm text-gray-500 bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded-full">
+                                          ... and {message.queryResult.result.results.length - 10} more entries
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               )}
                             </div>
-                          </div>
-                        )}
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {message.type === 'ai' && (
+                      <div className="flex items-center space-x-2 mt-4 pt-3 border-t border-gray-700">
+                        <button className="flex items-center space-x-1 text-xs text-text-muted hover:text-neon-purple-500 transition-colors">
+                          <Copy className="w-3 h-3" />
+                          <span>Copy</span>
+                        </button>
+                        <button className="flex items-center space-x-1 text-xs text-text-muted hover:text-neon-purple-500 transition-colors">
+                          <ExternalLink className="w-3 h-3" />
+                          <span>Export</span>
+                        </button>
                       </div>
                     )}
-                     </div>
-                   )
-                 )}
-              </div>
-            </div>
-          ))}
-
-          {/* Loading indicator */}
-          {isLoading && (
-            <div className="flex justify-start">
-              <div className="flex items-start space-x-3">
-                <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-blue-100 text-blue-600 mr-3">
-                  <Bot className="w-4 h-4" />
-                </div>
-                <div className="bg-gray-100 rounded-2xl px-4 py-3">
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                   </div>
                 </div>
               </div>
             </div>
-          )}
-          
-          <div ref={messagesEndRef} />
-        </div>
-      </div>
+          ))
+        )}
 
-      {/* Suggested Questions - Positioned above input */}
-      {messages.length === 1 && !isLoading && (
-        <div className="fixed bottom-20 z-40" style={{ 
-          left: sidebarOpen ? '256px' : '0px',
-          right: '0px',
-          transition: 'left 300ms ease-in-out'
-        }}>
-          <div className="max-w-3xl mx-auto px-4">
-            <div className="text-center mb-4">
-              <div className="flex flex-wrap justify-center gap-2">
-                {suggestedQuestions.map((question, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setInputValue(question)}
-                    className="text-xs px-3 py-2 bg-white hover:bg-gray-50 border border-gray-200 rounded-full text-gray-700 transition-colors shadow-sm"
-                  >
-                    {question}
-                  </button>
-                ))}
+        {/* Loading indicator */}
+        {isLoading && (
+          <div className="w-full">
+            <div className="bg-dark-surface rounded-lg p-6 border border-gray-700">
+              <div className="flex items-center justify-center space-x-3">
+                <div className="flex space-x-1">
+                  <div className="w-3 h-3 bg-neon-purple-500 rounded-full animate-bounce"></div>
+                  <div className="w-3 h-3 bg-neon-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                  <div className="w-3 h-3 bg-neon-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                </div>
+                <span className="text-text-muted">Processing your query...</span>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Input Area - Fixed at bottom with responsive positioning */}
-      <div className="fixed bottom-6 z-50" style={{ 
-        left: sidebarOpen ? '256px' : '0px',
-        right: '0px',
-        transition: 'left 300ms ease-in-out'
-      }}>
-        <div className="max-w-3xl mx-auto px-4">
-          <div className="bg-white rounded-full border border-gray-300 shadow-lg flex items-center px-5 py-3 min-h-[50px] max-h-32 overflow-hidden">
-            <textarea
+      {/* Input Area */}
+      <div className="bg-dark-surface border-t border-gray-800 p-4">
+        <div className="flex items-center space-x-3">
+          <div className="flex-1 relative">
+            <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-text-muted" />
+            <input
+              type="text"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Ask about your system health, security metrics, or performance..."
-              className="flex-1 bg-transparent border-none outline-none resize-none text-sm placeholder-gray-500 leading-relaxed pr-3"
-              rows={1}
-              style={{ minHeight: '24px', maxHeight: '96px' }}
-              disabled={isLoading}
+              placeholder="Ask about logs, metrics, anomalies, or system health..."
+              className="w-full pl-12 pr-4 py-4 bg-dark-card border border-gray-700 rounded-xl text-text-primary placeholder-text-muted focus:outline-none focus:border-neon-purple-500 focus:ring-2 focus:ring-neon-purple-500/20 transition-all duration-200"
             />
-            <button
-              onClick={handleSendMessage}
-              disabled={!inputValue.trim() || isLoading}
-              className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 flex-shrink-0 ${
-                inputValue.trim() && !isLoading
-                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-              }`}
-            >
-              <Send className="w-4 h-4" />
-            </button>
           </div>
+          <button
+            onClick={handleSendMessage}
+            disabled={!inputValue.trim()}
+            className="px-6 py-4 bg-gradient-neon text-white rounded-xl hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center space-x-2 font-medium shadow-lg"
+          >
+            <Send className="w-5 h-5" />
+            <span>Analyze</span>
+          </button>
         </div>
+        
+        {/* Quick Suggestions when typing */}
+         {inputValue.length > 0 && messages.length > 0 && (
+           <div className="mt-3 flex flex-wrap gap-2">
+             {suggestedQueries.slice(0, 4).map((query, index) => (
+               <button
+                 key={index}
+                 onClick={() => handleSuggestedQuery(query)}
+                 className="px-3 py-1 text-xs bg-dark-card hover:bg-neon-purple-500/20 border border-gray-700 hover:border-neon-purple-500 rounded-lg text-text-muted hover:text-neon-purple-500 transition-all duration-200"
+               >
+                 {query.substring(2)}
+               </button>
+             ))}
+           </div>
+         )}
       </div>
     </div>
   );

@@ -8,6 +8,7 @@ from the monitoring data including metrics, logs, events, and alerts.
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select, desc, func, and_, or_
 from dataclasses import dataclass
 import json
@@ -481,6 +482,328 @@ class SummaryService:
             recommendations.append("System performance appears to be within normal parameters.")
         
         return recommendations
+
+    # Synchronous wrapper methods for NLP query translator compatibility
+    def get_performance_report(self, db_session: Session, period: str = "24h") -> Dict[str, Any]:
+        """
+        Synchronous wrapper for generate_performance_report.
+        Used by NLP query translator which operates with sync database sessions.
+        
+        Args:
+            db_session: Synchronous database session
+            period: Time period for the report
+            
+        Returns:
+            Dictionary containing performance report data
+        """
+        try:
+            if period not in SUMMARY_PERIODS:
+                raise ValueError(f"Invalid period: {period}")
+            
+            summary_period = SUMMARY_PERIODS[period]
+            start_time = summary_period.start_time
+            
+            # Get detailed metrics analysis using sync session
+            metrics_query = select(MetricsModel).where(
+                MetricsModel.timestamp >= start_time
+            ).order_by(MetricsModel.timestamp)
+            
+            result = db_session.execute(metrics_query)
+            metrics = result.scalars().all()
+            
+            if not metrics:
+                return {
+                    "status": "no_data", 
+                    "period": summary_period.name,
+                    "message": f"No performance data available for the {summary_period.name.lower()}"
+                }
+            
+            # Analyze performance trends
+            performance_analysis = self._analyze_performance_trends(metrics)
+            
+            # Get resource utilization patterns
+            utilization_patterns = self._analyze_utilization_patterns(metrics)
+            
+            # Get performance recommendations
+            recommendations = self._generate_performance_recommendations(metrics)
+            
+            return {
+                "status": "success",
+                "period": {
+                    "name": summary_period.name,
+                    "start_time": start_time.isoformat(),
+                    "end_time": datetime.now(timezone.utc).isoformat()
+                },
+                "performance_analysis": performance_analysis,
+                "utilization_patterns": utilization_patterns,
+                "recommendations": recommendations,
+                "generated_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error generating performance report: {str(e)}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "message": "Failed to generate performance report"
+            }
+
+    def get_system_summary(self, db_session: Session, period: str = "24h") -> Dict[str, Any]:
+        """
+        Synchronous wrapper for generate_system_summary.
+        Used by NLP query translator which operates with sync database sessions.
+        
+        Args:
+            db_session: Synchronous database session
+            period: Time period for the summary
+            
+        Returns:
+            Dictionary containing system summary data
+        """
+        try:
+            summary_period = self._get_period_info(period)
+            start_time = summary_period.start_time
+            
+            # Generate all summary components using sync session
+            metrics_summary = self._get_metrics_summary_sync(db_session, start_time)
+            alerts_summary = self._get_alerts_summary_sync(db_session, start_time)
+            events_summary = self._get_events_summary_sync(db_session, start_time)
+            logs_summary = self._get_logs_summary_sync(db_session, start_time)
+            containers_summary = self._get_containers_summary_sync(db_session, start_time)
+            
+            return {
+                "status": "success",
+                "period": {
+                    "name": summary_period.name,
+                    "hours": summary_period.hours,
+                    "start_time": start_time.isoformat(),
+                    "end_time": datetime.now(timezone.utc).isoformat()
+                },
+                "metrics": metrics_summary,
+                "alerts": alerts_summary,
+                "events": events_summary,
+                "logs": logs_summary,
+                "containers": containers_summary,
+                "generated_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error generating system summary: {str(e)}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "message": "Failed to generate system summary"
+            }
+
+    def _get_metrics_summary_sync(self, db_session: Session, start_time: datetime) -> Dict[str, Any]:
+        """Synchronous version of _get_metrics_summary"""
+        try:
+            # Get metrics data for the period
+            query = select(MetricsModel).where(
+                MetricsModel.timestamp >= start_time
+            ).order_by(desc(MetricsModel.timestamp))
+            
+            result = db_session.execute(query)
+            metrics = result.scalars().all()
+            
+            if not metrics:
+                return {"status": "no_data", "count": 0}
+            
+            # Calculate statistics
+            cpu_values = [float(m.cpu_usage) for m in metrics if m.cpu_usage is not None]
+            memory_values = [float(m.memory_usage) for m in metrics if m.memory_usage is not None]
+            disk_values = [float(m.disk_usage) for m in metrics if m.disk_usage is not None]
+            
+            return {
+                "count": len(metrics),
+                "cpu_usage": self._calculate_stats(cpu_values),
+                "memory_usage": self._calculate_stats(memory_values),
+                "disk_usage": self._calculate_stats(disk_values),
+                "latest": {
+                    "timestamp": metrics[0].timestamp.isoformat(),
+                    "cpu_usage": float(metrics[0].cpu_usage) if metrics[0].cpu_usage else None,
+                    "memory_usage": float(metrics[0].memory_usage) if metrics[0].memory_usage else None,
+                    "disk_usage": float(metrics[0].disk_usage) if metrics[0].disk_usage else None,
+                    "tcp_connections": metrics[0].tcp_connections
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting metrics summary: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    def _get_alerts_summary_sync(self, db_session: Session, start_time: datetime) -> Dict[str, Any]:
+        """Synchronous version of _get_alerts_summary"""
+        try:
+            # Get alerts for the period
+            query = select(AlertsModel).where(
+                AlertsModel.timestamp >= start_time
+            )
+            
+            result = db_session.execute(query)
+            alerts = result.scalars().all()
+            
+            # Count by severity
+            severity_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
+            resolved_count = 0
+            unresolved_count = 0
+            
+            for alert in alerts:
+                severity_counts[alert.severity] += 1
+                if alert.resolved:
+                    resolved_count += 1
+                else:
+                    unresolved_count += 1
+            
+            # Get recent unresolved alerts
+            recent_unresolved_query = select(AlertsModel).where(
+                and_(
+                    AlertsModel.timestamp >= start_time,
+                    AlertsModel.resolved == False
+                )
+            ).order_by(desc(AlertsModel.timestamp)).limit(5)
+            
+            recent_result = db_session.execute(recent_unresolved_query)
+            recent_unresolved = recent_result.scalars().all()
+            
+            return {
+                "total_count": len(alerts),
+                "severity_breakdown": severity_counts,
+                "resolved_count": resolved_count,
+                "unresolved_count": unresolved_count,
+                "recent_unresolved": [
+                    {
+                        "id": alert.id,
+                        "timestamp": alert.timestamp.isoformat(),
+                        "severity": alert.severity,
+                        "type": alert.type,
+                        "message": alert.message[:100] + "..." if len(alert.message or "") > 100 else alert.message
+                    }
+                    for alert in recent_unresolved
+                ]
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting alerts summary: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    def _get_events_summary_sync(self, db_session: Session, start_time: datetime) -> Dict[str, Any]:
+        """Synchronous version of _get_events_summary"""
+        try:
+            # Get events for the period
+            query = select(DockerEventsModel).where(
+                DockerEventsModel.timestamp >= start_time
+            )
+            
+            result = db_session.execute(query)
+            events = result.scalars().all()
+            
+            # Count by action type
+            action_counts = {}
+            container_events = {}
+            
+            for event in events:
+                action = event.action or "unknown"
+                action_counts[action] = action_counts.get(action, 0) + 1
+                
+                container = event.container or "unknown"
+                if container not in container_events:
+                    container_events[container] = 0
+                container_events[container] += 1
+            
+            # Get most active containers
+            most_active_containers = sorted(
+                container_events.items(), 
+                key=lambda x: x[1], 
+                reverse=True
+            )[:5]
+            
+            return {
+                "total_count": len(events),
+                "action_breakdown": action_counts,
+                "most_active_containers": [
+                    {"container": container, "event_count": count}
+                    for container, count in most_active_containers
+                ]
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting events summary: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    def _get_logs_summary_sync(self, db_session: Session, start_time: datetime) -> Dict[str, Any]:
+        """Synchronous version of _get_logs_summary"""
+        try:
+            # Get log count for the period
+            count_query = select(func.count(ContainerLogsModel.id)).where(
+                ContainerLogsModel.timestamp >= start_time
+            )
+            
+            count_result = db_session.execute(count_query)
+            total_logs = count_result.scalar()
+            
+            # Get logs by container
+            container_query = select(
+                ContainerLogsModel.container,
+                func.count(ContainerLogsModel.id).label('log_count')
+            ).where(
+                ContainerLogsModel.timestamp >= start_time
+            ).group_by(ContainerLogsModel.container).order_by(
+                desc(func.count(ContainerLogsModel.id))
+            ).limit(10)
+            
+            container_result = db_session.execute(container_query)
+            container_logs = container_result.all()
+            
+            return {
+                "total_count": total_logs,
+                "logs_by_container": [
+                    {"container": row.container, "log_count": row.log_count}
+                    for row in container_logs
+                ]
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting logs summary: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    def _get_containers_summary_sync(self, db_session: Session, start_time: datetime) -> Dict[str, Any]:
+        """Synchronous version of _get_containers_summary"""
+        try:
+            # Get unique containers from events
+            events_query = select(DockerEventsModel.container).where(
+                and_(
+                    DockerEventsModel.timestamp >= start_time,
+                    DockerEventsModel.container.isnot(None)
+                )
+            ).distinct()
+            
+            events_result = db_session.execute(events_query)
+            containers_with_events = {row[0] for row in events_result.all()}
+            
+            # Get unique containers from logs
+            logs_query = select(ContainerLogsModel.container).where(
+                and_(
+                    ContainerLogsModel.timestamp >= start_time,
+                    ContainerLogsModel.container.isnot(None)
+                )
+            ).distinct()
+            
+            logs_result = db_session.execute(logs_query)
+            containers_with_logs = {row[0] for row in logs_result.all()}
+            
+            all_containers = containers_with_events.union(containers_with_logs)
+            
+            return {
+                "total_active_containers": len(all_containers),
+                "containers_with_events": len(containers_with_events),
+                "containers_with_logs": len(containers_with_logs),
+                "container_list": list(all_containers)[:20]  # Limit to first 20
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting containers summary: {str(e)}")
+            return {"status": "error", "message": str(e)}
 
 # Create a global instance
 summary_service = SummaryService()
