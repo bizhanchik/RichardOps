@@ -44,7 +44,7 @@ export class TCPDataService {
 
     try {
       console.log('Fetching fresh TCP data from API');
-      const response = await fetch(`http://159.89.104.120:8000/metrics/range?period=${timeRange}`);
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/metrics/range?period=${timeRange}`);
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);

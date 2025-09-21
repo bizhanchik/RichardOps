@@ -18,7 +18,7 @@ export const useApiConnectivity = (checkInterval: number = 30000) => {
   const checkConnectivity = async () => {
     const startTime = Date.now();
     try {
-      const response = await fetch('http://159.89.104.120:8000/metrics/range?metric=cpu&range=1h', {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/health`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

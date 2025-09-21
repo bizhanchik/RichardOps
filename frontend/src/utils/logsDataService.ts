@@ -53,7 +53,7 @@ class LogsDataService {
   private apiUrl: string;
 
   constructor() {
-    this.apiUrl = 'http://159.89.104.120:8000';
+    this.apiUrl = import.meta.env.VITE_API_BASE_URL;
   }
 
   /**
@@ -69,7 +69,7 @@ class LogsDataService {
       if (params.container) searchParams.append('container', params.container);
       if (params.size) searchParams.append('size', params.size.toString());
 
-      const response = await fetch(`${this.apiUrl}/api/logs/search/quick?${searchParams}`);
+      const response = await fetch(`${this.apiUrl}/logs/search?${searchParams}`);
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -156,70 +156,6 @@ class LogsDataService {
     } catch (error) {
       console.error('Error searching logs with limit:', error);
       throw error;
-    }
-  }
-
-  /**
-   * Get available filter options for dropdowns
-   */
-  async getFilterOptions(): Promise<LogFilterOptions> {
-    try {
-      const response = await fetch(`${this.apiUrl}/api/logs/filters`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching filter options:', error);
-      // Return default options on error
-      return {
-        containers: [],
-        hosts: [],
-        environments: ['production', 'staging', 'development'],
-        log_levels: ['ERROR', 'WARN', 'INFO', 'DEBUG'],
-        severities: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
-      };
-    }
-  }
-
-  /**
-   * Get log analytics data
-   */
-  async getLogAnalytics(hours: number = 24): Promise<LogAnalytics> {
-    try {
-      const response = await fetch(`${this.apiUrl}/api/logs/analytics/logs?hours=${hours}`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching log analytics:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Check if the logs service is available
-   */
-  async healthCheck(): Promise<{ status: string; available: boolean }> {
-    try {
-      const response = await fetch(`${this.apiUrl}/api/logs/health`);
-      const data = await response.json();
-      
-      return {
-        status: data.status || 'unknown',
-        available: response.ok && data.status === 'healthy'
-      };
-    } catch (error) {
-      console.error('Logs service health check failed:', error);
-      return {
-        status: 'unhealthy',
-        available: false
-      };
     }
   }
 
