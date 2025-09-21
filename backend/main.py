@@ -648,6 +648,65 @@ async def root() -> Dict[str, str]:
     }
 
 
+@app.get("/debug/metrics")
+async def debug_metrics(
+    limit: int = Query(default=10, le=50, description="Number of recent metrics to check"),
+    db: AsyncSession = Depends(get_db_session)
+) -> Dict[str, Any]:
+    """
+    Debug endpoint to check actual metrics data in database.
+    
+    Returns:
+        Raw metrics data for debugging purposes
+    """
+    try:
+        # Get recent metrics
+        query = select(MetricsModel).order_by(desc(MetricsModel.timestamp)).limit(limit)
+        result = await db.execute(query)
+        metrics = result.scalars().all()
+        
+        # Get total count
+        count_query = select(func.count(MetricsModel.id))
+        count_result = await db.execute(count_query)
+        total_count = count_result.scalar()
+        
+        # Analyze the data
+        debug_info = {
+            "total_metrics_count": total_count,
+            "recent_metrics_count": len(metrics),
+            "sample_metrics": []
+        }
+        
+        for metric in metrics:
+            debug_info["sample_metrics"].append({
+                "id": metric.id,
+                "timestamp": metric.timestamp.isoformat(),
+                "cpu_usage": float(metric.cpu_usage) if metric.cpu_usage is not None else None,
+                "memory_usage": float(metric.memory_usage) if metric.memory_usage is not None else None,
+                "disk_usage": float(metric.disk_usage) if metric.disk_usage is not None else None,
+                "network_rx": metric.network_rx,
+                "network_tx": metric.network_tx,
+                "tcp_connections": metric.tcp_connections
+            })
+        
+        # Check for NULL values
+        cpu_null_count = sum(1 for m in metrics if m.cpu_usage is None)
+        memory_null_count = sum(1 for m in metrics if m.memory_usage is None)
+        
+        debug_info["analysis"] = {
+            "cpu_null_count": cpu_null_count,
+            "memory_null_count": memory_null_count,
+            "cpu_null_percentage": round((cpu_null_count / len(metrics)) * 100, 2) if metrics else 0,
+            "memory_null_percentage": round((memory_null_count / len(metrics)) * 100, 2) if metrics else 0
+        }
+        
+        return debug_info
+        
+    except Exception as e:
+        logger.error(f"Debug metrics endpoint error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving debug metrics: {str(e)}")
+
+
 @app.get("/")
 async def root() -> Dict[str, str]:
     """
@@ -669,7 +728,8 @@ async def root() -> Dict[str, str]:
             "metrics_recent": "/metrics/recent",
             "metrics_range": "/metrics/range",
             "events_recent": "/events/recent",
-            "logs_search": "/logs/search"
+            "logs_search": "/logs/search",
+            "debug_metrics": "/debug/metrics"
         }
     }
 

@@ -125,11 +125,35 @@ class SummaryService:
             memory_values = [float(m.memory_usage) for m in metrics if m.memory_usage is not None]
             disk_values = [float(m.disk_usage) for m in metrics if m.disk_usage is not None]
             
+            # Count NULL values for debugging
+            cpu_null_count = sum(1 for m in metrics if m.cpu_usage is None)
+            memory_null_count = sum(1 for m in metrics if m.memory_usage is None)
+            disk_null_count = sum(1 for m in metrics if m.disk_usage is None)
+            
+            # Enhanced statistics with data quality information
+            cpu_stats = self._calculate_stats(cpu_values)
+            cpu_stats["null_count"] = cpu_null_count
+            cpu_stats["data_quality"] = "good" if cpu_null_count == 0 else "poor" if len(cpu_values) == 0 else "partial"
+            
+            memory_stats = self._calculate_stats(memory_values)
+            memory_stats["null_count"] = memory_null_count
+            memory_stats["data_quality"] = "good" if memory_null_count == 0 else "poor" if len(memory_values) == 0 else "partial"
+            
+            disk_stats = self._calculate_stats(disk_values)
+            disk_stats["null_count"] = disk_null_count
+            disk_stats["data_quality"] = "good" if disk_null_count == 0 else "poor" if len(disk_values) == 0 else "partial"
+            
             return {
                 "count": len(metrics),
-                "cpu_usage": self._calculate_stats(cpu_values),
-                "memory_usage": self._calculate_stats(memory_values),
-                "disk_usage": self._calculate_stats(disk_values),
+                "cpu_usage": cpu_stats,
+                "memory_usage": memory_stats,
+                "disk_usage": disk_stats,
+                "data_quality_summary": {
+                    "total_records": len(metrics),
+                    "cpu_null_percentage": round((cpu_null_count / len(metrics)) * 100, 2) if metrics else 0,
+                    "memory_null_percentage": round((memory_null_count / len(metrics)) * 100, 2) if metrics else 0,
+                    "disk_null_percentage": round((disk_null_count / len(metrics)) * 100, 2) if metrics else 0
+                },
                 "latest": {
                     "timestamp": metrics[0].timestamp.isoformat(),
                     "cpu_usage": float(metrics[0].cpu_usage) if metrics[0].cpu_usage else None,
@@ -316,16 +340,23 @@ class SummaryService:
             self.logger.error(f"Error getting containers summary: {str(e)}")
             return {"status": "error", "message": str(e)}
     
-    def _calculate_stats(self, values: List[float]) -> Dict[str, float]:
+    def _calculate_stats(self, values: List[float]) -> Dict[str, Any]:
         """Calculate basic statistics for a list of values"""
         if not values:
-            return {"min": 0, "max": 0, "avg": 0, "count": 0}
+            return {
+                "min": None,
+                "max": None, 
+                "avg": None,
+                "count": 0,
+                "status": "no_data"
+            }
         
         return {
             "min": round(min(values), 2),
             "max": round(max(values), 2),
             "avg": round(sum(values) / len(values), 2),
-            "count": len(values)
+            "count": len(values),
+            "status": "ok"
         }
     
     async def generate_performance_report(

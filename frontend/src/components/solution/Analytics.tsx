@@ -137,20 +137,46 @@ const Analytics: React.FC<AnalyticsProps> = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* System Metrics Cards */}
           {data.summary.metrics && Object.entries(data.summary.metrics).map(([key, value]) => {
-            const numericValue = typeof value === 'number' ? value : parseFloat(String(value)) || 0;
+            // Handle new data structure with avg, min, max, count, status
+            let displayValue, status, subtitle;
+            
+            if (typeof value === 'object' && value !== null) {
+              // New structure with statistics
+              if (value.status === 'no_data' || value.avg === null) {
+                displayValue = 'N/A';
+                status = 'warning';
+                subtitle = `No data available (${value.count || 0} records)`;
+              } else {
+                const numericValue = value.avg || 0;
+                const isPercentage = key.includes('usage') || key.includes('percent');
+                displayValue = isPercentage ? Math.round(numericValue) : numericValue;
+                status = isPercentage 
+                  ? (numericValue > 80 ? 'critical' : numericValue > 60 ? 'warning' : 'healthy')
+                  : 'healthy';
+                subtitle = `Min: ${value.min}, Max: ${value.max} (${value.count} records)`;
+              }
+            } else {
+              // Legacy structure - single numeric value
+              const numericValue = typeof value === 'number' ? value : parseFloat(String(value)) || 0;
+              const isPercentage = key.includes('usage') || key.includes('percent');
+              displayValue = isPercentage ? Math.round(numericValue) : numericValue;
+              status = isPercentage 
+                ? (numericValue > 80 ? 'critical' : numericValue > 60 ? 'warning' : 'healthy')
+                : 'healthy';
+              subtitle = undefined;
+            }
+            
             const isPercentage = key.includes('usage') || key.includes('percent');
-            const status = isPercentage 
-              ? (numericValue > 80 ? 'critical' : numericValue > 60 ? 'warning' : 'healthy')
-              : 'healthy';
             
             return (
               <StatusCard
                 key={key}
                 title={key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                value={isPercentage ? Math.round(numericValue) : numericValue}
-                unit={isPercentage ? '%' : undefined}
+                value={displayValue}
+                unit={isPercentage && displayValue !== 'N/A' ? '%' : undefined}
                 status={status}
                 icon={key.includes('cpu') ? 'cpu' : key.includes('memory') ? 'server' : 'activity'}
+                subtitle={subtitle}
                 trend={{
                   direction: 'stable',
                   percentage: 0,
@@ -299,8 +325,47 @@ const Analytics: React.FC<AnalyticsProps> = () => {
               Export Report
             </button>
           </div>
-          
-          {/* Performance Insights */}
+        
+        {/* Data Quality Section */}
+        {data.summary.data_quality && (
+          <div className="bg-white p-6 rounded-lg border border-gray-200">
+            <h4 className="font-semibold text-gray-900 mb-4 flex items-center">
+              <BarChart3 className="w-5 h-5 mr-2 text-blue-500" />
+              Data Quality Report
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 bg-blue-50 rounded-md">
+                <div className="text-sm text-gray-600">Total Records</div>
+                <div className="text-2xl font-bold text-blue-700">{data.summary.data_quality.total_records}</div>
+              </div>
+              <div className="p-4 bg-yellow-50 rounded-md">
+                <div className="text-sm text-gray-600">CPU NULL Values</div>
+                <div className="text-2xl font-bold text-yellow-700">
+                  {data.summary.data_quality.cpu_null_percentage}%
+                </div>
+                <div className="text-xs text-gray-500">
+                  {data.summary.data_quality.cpu_null_count} of {data.summary.data_quality.total_records}
+                </div>
+              </div>
+              <div className="p-4 bg-orange-50 rounded-md">
+                <div className="text-sm text-gray-600">Memory NULL Values</div>
+                <div className="text-2xl font-bold text-orange-700">
+                  {data.summary.data_quality.memory_null_percentage}%
+                </div>
+                <div className="text-xs text-gray-500">
+                  {data.summary.data_quality.memory_null_count} of {data.summary.data_quality.total_records}
+                </div>
+              </div>
+            </div>
+            {data.summary.data_quality.summary && (
+              <div className="mt-4 p-3 bg-gray-50 rounded-md">
+                <div className="text-sm text-gray-700">{data.summary.data_quality.summary}</div>
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* Performance Insights */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             <div className="space-y-4">
               <h5 className="font-medium text-gray-900">Key Insights</h5>
