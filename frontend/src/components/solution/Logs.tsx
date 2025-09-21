@@ -89,36 +89,36 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
     <div className="h-full flex flex-col">
       {/* Terminal Body - Fixed Window Height */}
       <div className="flex-1 overflow-hidden">
-        <div className="h-[600px] bg-black text-green-400 font-mono text-sm border border-gray-700 flex flex-col rounded-lg shadow-2xl">
+        <div className="h-[80vh] bg-white text-gray-800 font-mono text-base border border-gray-300 flex flex-col rounded-lg shadow-2xl">
           {/* Terminal Header - Static */}
-          <div className="flex items-center space-x-2 p-6 pb-2 border-b border-gray-700 flex-shrink-0">
+          <div className="flex items-center space-x-2 p-6 pb-2 border-b border-gray-300 flex-shrink-0">
             <div className="flex space-x-2">
               <div className="w-3 h-3 bg-red-500 rounded-full"></div>
               <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
               <div className="w-3 h-3 bg-green-500 rounded-full"></div>
             </div>
             <Terminal className="w-4 h-4 ml-4" />
-            <span className="text-green-300">RichardOps Logs Terminal ({logs.length} entries)</span>
+            <span className="text-gray-700">RichardOps Logs Terminal ({logs.length} entries)</span>
             {isLoading && (
               <div className="ml-3 flex items-center space-x-2">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-400"></div>
-                <span className="text-yellow-400 text-sm">Loading...</span>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                <span className="text-blue-600 text-sm">Loading...</span>
               </div>
             )}
           </div>
 
           {/* Scrollable Content Area */}
           <div 
-            className="flex-1 overflow-y-auto p-6 pt-4 scrollbar-thin scrollbar-track-black scrollbar-thumb-gray-800 hover:scrollbar-thumb-gray-700"
+            className="flex-1 overflow-y-auto p-6 pt-4 scrollbar-thin scrollbar-track-gray-100 scrollbar-thumb-gray-400 hover:scrollbar-thumb-gray-500"
             style={{
-              scrollbarColor: '#374151 #000000',
+              scrollbarColor: '#9CA3AF #F3F4F6',
               scrollbarWidth: 'thin'
             }}
           >
             {/* Error State */}
             {error && (
-              <div className="text-red-400 mb-4 p-3 bg-red-900/20 border border-red-800 rounded">
-                <span className="text-red-300">Error: </span>
+              <div className="text-red-700 mb-4 p-3 bg-red-50 border border-red-200 rounded">
+                <span className="text-red-600 font-medium">Error: </span>
                 {error}
               </div>
             )}
@@ -127,8 +127,8 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
 
             {/* Empty State */}
             {!isLoading && logs.length === 0 && !error && (
-              <div className="text-gray-500 text-center py-8">
-                <Terminal className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <div className="text-gray-600 text-center py-8">
+                <Terminal className="w-12 h-12 mx-auto mb-4 opacity-50 text-gray-400" />
                 <p className="text-lg mb-2">No logs found</p>
                 <p className="text-sm">
                   {viewMode === 'search' ? 'Try adjusting your search query' : 'No logs available'}
@@ -142,23 +142,23 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
                 const timestamp = LogsDataService.formatTimestamp(log.timestamp);
                 
                 return (
-                  <div key={log.id || index} className="mb-2 hover:bg-gray-900/50 p-2 rounded transition-colors">
+                  <div key={log.id || index} className="mb-2 hover:bg-gray-50 p-2 rounded transition-colors">
                     <div className="flex flex-col lg:flex-row lg:items-start space-y-1 lg:space-y-0 lg:space-x-3">
                       {/* Top row: Timestamp, Level (if available), and Container */}
                       <div className="flex items-center space-x-3 lg:flex-none">
                         {/* Timestamp */}
-                        <span className="text-gray-400 text-xs whitespace-nowrap">
+                        <span className="text-blue-600 text-sm whitespace-nowrap font-medium">
                           <span className="hidden sm:inline">{timestamp.split(' ')[0]} </span>
                           {timestamp.split(' ')[1]} {/* Show only time on mobile, full on desktop */}
                         </span>
                         
                         {/* Level Badge (if available) */}
                         {log.level && (
-                          <span className={`px-2 py-1 rounded text-xs font-medium whitespace-nowrap ${
-                            log.level === 'ERROR' ? 'bg-red-900 text-red-300' :
-                            log.level === 'WARN' ? 'bg-yellow-900 text-yellow-300' :
-                            log.level === 'INFO' ? 'bg-blue-900 text-blue-300' :
-                            'bg-gray-800 text-gray-300'
+                          <span className={`px-2 py-1 rounded text-sm font-medium whitespace-nowrap ${
+                            log.level === 'ERROR' ? 'bg-red-100 text-red-700 border border-red-200' :
+                            log.level === 'WARN' ? 'bg-yellow-100 text-yellow-700 border border-yellow-200' :
+                            log.level === 'INFO' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+                            'bg-gray-100 text-gray-700 border border-gray-200'
                           }`}>
                             {log.level}
                           </span>
@@ -166,7 +166,7 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
 
                         {/* Container Info */}
                         {log.container && (
-                          <span className="text-purple-400 text-xs whitespace-nowrap">
+                          <span className="text-purple-700 text-sm whitespace-nowrap font-medium">
                             [{log.container}]
                           </span>
                         )}
@@ -174,7 +174,7 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
 
                       {/* Message */}
                       <div className="flex-1 min-w-0">
-                        <span className="text-green-400 break-words font-mono">
+                        <span className="text-green-600 break-words font-mono">
                           {log.message}
                         </span>
                       </div>
@@ -182,7 +182,7 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
 
                     {/* Additional metadata on second line if available */}
                     {(log.host || log.environment) && (
-                      <div className="mt-1 lg:ml-16 text-xs text-gray-500">
+                      <div className="mt-1 lg:ml-16 text-sm text-gray-700">
                         {log.host && <span>host: {log.host}</span>}
                         {log.host && log.environment && <span className="mx-2">|</span>}
                         {log.environment && <span>env: {log.environment}</span>}
