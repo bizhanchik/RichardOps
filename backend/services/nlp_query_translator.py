@@ -15,6 +15,8 @@ from db_models import (
     MetricsModel, EmailNotificationsModel
 )
 from services.nlp_query_parser import ParsedQuery, QueryIntent, EntityType
+from services.summary_service import summary_service
+from services.anomaly_detection import anomaly_detector
 
 
 class QueryTranslator:
@@ -42,7 +44,11 @@ class QueryTranslator:
             QueryIntent.SHOW_ALERTS: self._handle_show_alerts,
             QueryIntent.GENERATE_REPORT: self._handle_generate_report,
             QueryIntent.INVESTIGATE: self._handle_investigate,
-            QueryIntent.ANALYZE_TRENDS: self._handle_analyze_trends
+            QueryIntent.ANALYZE_TRENDS: self._handle_analyze_trends,
+            QueryIntent.ANALYTICS_SUMMARY: self._handle_analytics_summary,
+            QueryIntent.ANALYTICS_ANOMALIES: self._handle_analytics_anomalies,
+            QueryIntent.ANALYTICS_PERFORMANCE: self._handle_analytics_performance,
+            QueryIntent.ANALYTICS_METRICS: self._handle_analytics_metrics
         }
     
     def fetch_all_logs(self, db_session: Session, limit: int = 1000, offset: int = 0) -> Dict[str, Any]:
@@ -237,7 +243,7 @@ class QueryTranslator:
             return {
                 "success": False,
                 "error": f"Failed to fetch latest logs: {str(e)}",
-                "data": {"logs": [], "count": 0}
+                "data": {"logs": [], "count": 0, "total_count": 0}
             }
     
     def fetch_logs_last_hour(self, db_session: Session, limit: int = 1000, offset: int = 0) -> Dict[str, Any]:
@@ -295,7 +301,7 @@ class QueryTranslator:
             return {
                 "success": False,
                 "error": f"Failed to fetch logs from last hour: {str(e)}",
-                "data": {"logs": [], "count": 0}
+                "data": {"logs": [], "count": 0, "total_count": 0}
             }
     
     def translate_query(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
@@ -346,36 +352,89 @@ class QueryTranslator:
                 "logs in the last hour", "logs in the past hour"
             ]
             
+            # Check for container-specific patterns
+            container_patterns = [
+                "container logs", "logs from container", "logs for container",
+                "show container", "get container", "display container",
+                "container logs for", "logs from container", "container"
+            ]
+            
             # Handle time-based queries
             if any(pattern in original_query for pattern in latest_patterns):
                 result = self.fetch_latest_logs(db_session, limit=50)
-                return {
-                    "intent": "search_logs",
-                    "results": result["data"]["logs"],
-                    "count": result["data"]["total_count"],
-                    "data_source": "postgresql",
-                    "query_info": {
-                        "query_type": "latest_logs",
-                        "limit": 50,
-                        "confidence": 1.0,
-                        "table_queried": "container_logs"
+                if result.get("success", False):
+                    return {
+                        "intent": "search_logs",
+                        "results": result["data"]["logs"],
+                        "count": result["data"]["total_count"],
+                        "data_source": "postgresql",
+                        "query_info": {
+                            "query_type": "latest_logs",
+                            "limit": 50,
+                            "confidence": 1.0,
+                            "table_queried": "container_logs"
+                        }
                     }
-                }
+                else:
+                    return {
+                        "intent": "search_logs",
+                        "error": f"Failed to fetch latest logs: {result.get('error', 'Unknown error')}",
+                        "results": [],
+                        "count": 0,
+                        "fallback_attempted": True
+                    }
             
             if any(pattern in original_query for pattern in last_hour_patterns):
                 result = self.fetch_logs_last_hour(db_session, limit=1000)
-                return {
-                    "intent": "search_logs",
-                    "results": result["data"]["logs"],
-                    "count": result["data"]["total_count"],
-                    "data_source": "postgresql",
-                    "query_info": {
-                        "query_type": "logs_last_hour",
-                        "time_filter": result["data"]["time_filter"],
-                        "confidence": 1.0,
-                        "table_queried": "container_logs"
+                if result.get("success", False):
+                    return {
+                        "intent": "search_logs",
+                        "results": result["data"]["logs"],
+                        "count": result["data"]["total_count"],
+                        "data_source": "postgresql",
+                        "query_info": {
+                            "query_type": "logs_last_hour",
+                            "time_filter": result["data"]["time_filter"],
+                            "confidence": 1.0,
+                            "table_queried": "container_logs"
+                        }
                     }
-                }
+                else:
+                    return {
+                        "intent": "search_logs",
+                        "error": f"Failed to fetch last hour logs: {result.get('error', 'Unknown error')}",
+                        "results": [],
+                        "count": 0,
+                        "fallback_attempted": True
+                    }
+            
+            # Handle container-specific queries with direct routing
+            if any(pattern in original_query for pattern in container_patterns):
+                # Extract container name from the query
+                container_name = self._extract_container_name_from_query(original_query)
+                if container_name:
+                    result = self.fetch_logs_by_container(db_session, container_name, limit=100)
+                    if result.get("success", False):
+                        return {
+                            "intent": "search_logs",
+                            "results": result["data"]["logs"],
+                            "count": result["data"]["total_count"],
+                            "data_source": "postgresql",
+                            "query_info": {
+                                "query_type": "container_logs",
+                                "container": container_name,
+                                "confidence": 0.9,
+                                "table_queried": "container_logs"
+                            }
+                        }
+                    else:
+                        return {
+                            "intent": "search_logs",
+                            "error": f"Failed to fetch container logs: {result.get('error', 'Unknown error')}",
+                            "results": [],
+                            "count": 0,
+                            "fallback_attempted": True
+                        }
             
             # Check if this is a simple "show all logs" type query
             show_all_patterns = [
@@ -385,14 +444,14 @@ class QueryTranslator:
             ]
             
             # Check for specific entity filters
-            has_container_filter = any(entity.entity_type == EntityType.CONTAINER for entity in parsed_query.entities)
-            has_level_filter = any(entity.entity_type == EntityType.LOG_LEVEL for entity in parsed_query.entities)
+            has_container_filter = any(entity.type == EntityType.CONTAINER_NAME for entity in parsed_query.entities)
+            has_level_filter = any(entity.type == EntityType.LOG_LEVEL for entity in parsed_query.entities)
             
             # Use simple functions for common queries
             if any(pattern in original_query for pattern in show_all_patterns):
                 if has_container_filter:
                     # Get container name from entities
-                    container_entity = next((entity for entity in parsed_query.entities if entity.entity_type == EntityType.CONTAINER), None)
+                    container_entity = next((entity for entity in parsed_query.entities if entity.type == EntityType.CONTAINER_NAME), None)
                     if container_entity:
                         result = self.fetch_logs_by_container(db_session, container_entity.value, limit=100)
                         return {
@@ -409,7 +468,7 @@ class QueryTranslator:
                         }
                 elif has_level_filter:
                     # Get level from entities and search in message content
-                    level_entity = next((entity for entity in parsed_query.entities if entity.entity_type == EntityType.LOG_LEVEL), None)
+                    level_entity = next((entity for entity in parsed_query.entities if entity.type == EntityType.LOG_LEVEL), None)
                     if level_entity:
                         result = self.fetch_logs_by_message_pattern(db_session, level_entity.value, limit=100)
                         return {
@@ -493,7 +552,7 @@ class QueryTranslator:
             query = db_session.query(AlertsModel)
             
             # Apply severity filter
-            severity_entities = [e for e in parsed_query.entities if e.entity_type == EntityType.SEVERITY]
+            severity_entities = [e for e in parsed_query.entities if e.type == EntityType.SEVERITY]
             if severity_entities:
                 severities = [e.value.upper() for e in severity_entities]
                 query = query.filter(AlertsModel.severity.in_(severities))
@@ -1157,7 +1216,187 @@ class QueryTranslator:
             "trend": "stable"
         }
     
+    def _extract_container_name_from_query(self, query: str) -> Optional[str]:
+        """
+        Extract container name from natural language query.
+        
+        Args:
+            query: The natural language query string
+            
+        Returns:
+            Container name if found, None otherwise
+        """
+        import re
+        
+        # Common patterns for container names in queries
+        patterns = [
+            r'container\s+([a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9])',  # "container webapp"
+            r'from\s+container\s+([a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9])',  # "from container webapp"
+            r'for\s+container\s+([a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9])',  # "for container webapp"
+            r'([a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9])\s+container',  # "webapp container"
+            r'logs\s+([a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9])',  # "logs webapp"
+            r'show\s+([a-zA-Z0-9][a-zA-Z0-9_.-]*[a-zA-Z0-9])',  # "show webapp"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match:
+                container_name = match.group(1)
+                # Filter out common words that aren't container names
+                if container_name.lower() not in ['logs', 'all', 'recent', 'latest', 'show', 'get', 'display', 'from', 'for', 'the', 'a', 'an']:
+                    return container_name
+        
+        return None
 
+    def _handle_analytics_summary(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
+        """Handle analytics summary requests."""
+        try:
+            # Extract time period from query
+            time_period = "24h"  # default
+            if parsed_query.time_range:
+                if "week" in parsed_query.original_query.lower():
+                    time_period = "7d"
+                elif "month" in parsed_query.original_query.lower():
+                    time_period = "30d"
+                elif "hour" in parsed_query.original_query.lower():
+                    time_period = "1h"
+            
+            # Get summary from analytics service
+            summary = summary_service.get_system_summary(time_period)
+            
+            return {
+                "success": True,
+                "data": summary,
+                "query_type": "analytics_summary",
+                "message": f"System summary for the last {time_period}",
+                "metadata": {
+                    "time_period": time_period,
+                    "query": parsed_query.original_query
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "query_type": "analytics_summary",
+                "message": "Failed to generate analytics summary"
+            }
+
+    def _handle_analytics_anomalies(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
+        """Handle anomaly detection requests."""
+        try:
+            # Extract time period and severity from query
+            time_period = "24h"  # default
+            severity = None
+            
+            if parsed_query.time_range:
+                if "week" in parsed_query.original_query.lower():
+                    time_period = "7d"
+                elif "month" in parsed_query.original_query.lower():
+                    time_period = "30d"
+                elif "hour" in parsed_query.original_query.lower():
+                    time_period = "1h"
+            
+            # Extract severity from query
+            query_lower = parsed_query.original_query.lower()
+            if "critical" in query_lower:
+                severity = "critical"
+            elif "high" in query_lower:
+                severity = "high"
+            elif "medium" in query_lower:
+                severity = "medium"
+            elif "low" in query_lower:
+                severity = "low"
+            
+            # Get anomalies from detection service
+            anomalies = anomaly_detector.detect_anomalies(time_period, severity)
+            
+            return {
+                "success": True,
+                "data": anomalies,
+                "query_type": "analytics_anomalies",
+                "message": f"Anomalies detected in the last {time_period}",
+                "metadata": {
+                    "time_period": time_period,
+                    "severity_filter": severity,
+                    "query": parsed_query.original_query
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "query_type": "analytics_anomalies",
+                "message": "Failed to detect anomalies"
+            }
+
+    def _handle_analytics_performance(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
+        """Handle performance analytics requests."""
+        try:
+            # Extract time period from query
+            time_period = "24h"  # default
+            if parsed_query.time_range:
+                if "week" in parsed_query.original_query.lower():
+                    time_period = "7d"
+                elif "month" in parsed_query.original_query.lower():
+                    time_period = "30d"
+                elif "hour" in parsed_query.original_query.lower():
+                    time_period = "1h"
+            
+            # Get performance report from analytics service
+            performance = summary_service.get_performance_report(time_period)
+            
+            return {
+                "success": True,
+                "data": performance,
+                "query_type": "analytics_performance",
+                "message": f"Performance report for the last {time_period}",
+                "metadata": {
+                    "time_period": time_period,
+                    "query": parsed_query.original_query
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "query_type": "analytics_performance",
+                "message": "Failed to generate performance report"
+            }
+
+    def _handle_analytics_metrics(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
+        """Handle metrics analytics requests."""
+        try:
+            # Extract time period from query
+            time_period = "24h"  # default
+            if parsed_query.time_range:
+                if "week" in parsed_query.original_query.lower():
+                    time_period = "7d"
+                elif "month" in parsed_query.original_query.lower():
+                    time_period = "30d"
+                elif "hour" in parsed_query.original_query.lower():
+                    time_period = "1h"
+            
+            # Get detailed metrics from analytics service
+            metrics = summary_service.get_detailed_metrics(time_period)
+            
+            return {
+                "success": True,
+                "data": metrics,
+                "query_type": "analytics_metrics",
+                "message": f"Detailed metrics for the last {time_period}",
+                "metadata": {
+                    "time_period": time_period,
+                    "query": parsed_query.original_query
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "query_type": "analytics_metrics",
+                "message": "Failed to retrieve metrics"
+            }
 
     def _get_query_suggestions(self) -> List[str]:
         """Get query suggestions for unsupported intents."""
@@ -1167,7 +1406,11 @@ class QueryTranslator:
             "What assets did IP address 192.168.1.100 target?",
             "Show critical alerts from today",
             "Find all ERROR logs from container webapp",
-            "Investigate suspicious activity in the last 24 hours"
+            "Investigate suspicious activity in the last 24 hours",
+            "Give me a system summary for the last 24 hours",
+            "Show me performance metrics for this week",
+            "Detect anomalies in the last hour",
+            "What are the critical anomalies today?"
         ]
 
 
