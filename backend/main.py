@@ -21,6 +21,7 @@ from models import Payload
 from services.alerts import should_send_email, get_alert_severity, format_alert_summary
 from services.email import send_alert_email, format_alert_email_content
 from services.rules import process_log_entry, get_alerts, add_alert
+from services.anomaly_detection import AnomalyDetectionService
 from rules_engine import analyze_request, get_stored_alerts
 from database import get_db_session, init_db, close_db
 from performance_config import perf_config
@@ -242,6 +243,75 @@ async def ingest_monitoring_data(
         
         # Commit database changes
         await db.commit()
+
+        # Run anomaly detection on the newly stored metrics
+        anomaly_service = AnomalyDetectionService()
+        detected_anomalies = []
+        try:
+            # Detect metric spikes (CPU, memory, disk, TCP connections)
+            metric_anomalies = await anomaly_service.detect_metric_spikes(db, lookback_hours=1)
+            detected_anomalies.extend(metric_anomalies)
+            
+            # Log detected anomalies
+            if detected_anomalies:
+                logger.info(f"Detected {len(detected_anomalies)} anomalies: {[a.type for a in detected_anomalies]}")
+                for anomaly in detected_anomalies:
+                    logger.warning(f"ANOMALY DETECTED: {anomaly.type} - {anomaly.severity} - {anomaly.description}")
+                
+                # Send email alerts for high-severity anomalies
+                high_severity_anomalies = [a for a in detected_anomalies if a.severity in ["HIGH", "MEDIUM"]]
+                if high_severity_anomalies:
+                    try:
+                        alert_email = os.environ.get("ALERT_EMAIL")
+                        if alert_email:
+                            # Build email content for anomalies
+                            subject = f"🚨 ANOMALY ALERT - {len(high_severity_anomalies)} Detected on {payload.host}"
+                            
+                            # Create detailed email content
+                            anomaly_details = []
+                            for anomaly in high_severity_anomalies:
+                                details = f"• {anomaly.type.replace('_', ' ').title()}: {anomaly.severity} severity\n"
+                                details += f"  Description: {anomaly.description}\n"
+                                details += f"  Resource: {anomaly.affected_resource}\n"
+                                details += f"  Confidence: {anomaly.confidence:.1%}\n"
+                                if anomaly.details:
+                                    details += f"  Details: {anomaly.details}\n"
+                                anomaly_details.append(details)
+                            
+                            content = f"""
+🚨 ANOMALY DETECTION ALERT
+
+Server: {payload.host}
+Server ID: {payload.server_id or 'N/A'}
+Environment: {payload.env or 'N/A'}
+Timestamp: {datetime.now(timezone.utc).isoformat()}
+
+{len(high_severity_anomalies)} anomalies detected:
+
+{chr(10).join(anomaly_details)}
+
+Current System Status:
+• CPU Usage: {payload.metrics.cpu_usage:.1f}%
+• Memory Usage: {payload.metrics.memory_usage:.1f}%
+• Disk Usage: {payload.metrics.disk_usage:.1f}%
+• TCP Connections: {payload.metrics.tcp_connections}
+
+Please investigate immediately.
+
+---
+RichardOps Monitoring System
+"""
+                            
+                            # Send the alert email
+                            send_alert_email(subject, content, alert_email)
+                            logger.info(f"Anomaly alert email sent to {alert_email} for {len(high_severity_anomalies)} anomalies")
+                        else:
+                            logger.warning("ALERT_EMAIL environment variable not set, skipping anomaly email notification")
+                    except Exception as e:
+                        logger.error(f"Failed to send anomaly alert email: {str(e)}")
+            
+        except Exception as e:
+            logger.error(f"Error in anomaly detection: {str(e)}")
 
         # Pretty print to console
         print("\n" + "="*80)

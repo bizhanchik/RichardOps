@@ -335,7 +335,9 @@ class AnomalyDetectionService:
             # Generate anomalies based on statistical analysis
             for metric_name, analysis in metric_analyses.items():
                 if analysis["anomaly_detected"]:
-                    anomaly = self._create_metric_anomaly(metric_name, analysis)
+                    # Use the timestamp of the most recent metric
+                    most_recent_timestamp = max(m.timestamp for m in recent_metrics) if recent_metrics else datetime.now(timezone.utc)
+                    anomaly = self._create_metric_anomaly(metric_name, analysis, most_recent_timestamp)
                     if anomaly and anomaly.confidence >= self.thresholds.min_confidence:
                         anomalies.append(anomaly)
             
@@ -548,7 +550,7 @@ class AnomalyDetectionService:
         else:
             return "LOW"
     
-    def _create_metric_anomaly(self, metric_name: str, analysis: Dict[str, Any]) -> Optional[Anomaly]:
+    def _create_metric_anomaly(self, metric_name: str, analysis: Dict[str, Any], anomaly_timestamp: datetime) -> Optional[Anomaly]:
         """Create an anomaly object from metric analysis"""
         try:
             baseline_stats = analysis["baseline_stats"]
@@ -584,7 +586,7 @@ class AnomalyDetectionService:
             return Anomaly(
                 type=f"{metric_name}_spike",
                 severity=analysis["severity"],
-                timestamp=datetime.now(timezone.utc),
+                timestamp=anomaly_timestamp,
                 description=description,
                 details={
                     "detection_method": analysis["detection_method"],
@@ -689,19 +691,24 @@ class AnomalyDetectionService:
             if not logs:
                 return anomalies
             
-            # Count error logs vs total logs by container
-            container_stats = defaultdict(lambda: {"total": 0, "errors": 0})
+            # Count error logs vs total logs by container and track timestamps
+            container_stats = defaultdict(lambda: {"total": 0, "errors": 0, "error_timestamps": [], "latest_timestamp": None})
             
             error_keywords = ["error", "exception", "failed", "fatal", "critical", "500", "404", "timeout"]
             
             for log in logs:
                 container = log.container or "unknown"
                 container_stats[container]["total"] += 1
+                container_stats[container]["latest_timestamp"] = max(
+                    container_stats[container]["latest_timestamp"] or log.timestamp, 
+                    log.timestamp
+                )
                 
                 if log.message:
                     message_lower = log.message.lower()
                     if any(keyword in message_lower for keyword in error_keywords):
                         container_stats[container]["errors"] += 1
+                        container_stats[container]["error_timestamps"].append(log.timestamp)
             
             # Check error rates for each container
             for container, stats in container_stats.items():
@@ -710,10 +717,13 @@ class AnomalyDetectionService:
                     
                     if error_rate > self.thresholds.error_rate_threshold:
                         severity = "HIGH" if error_rate > 25 else "MEDIUM"
+                        # Use the timestamp of the most recent error log, or latest log if no errors
+                        anomaly_timestamp = (max(stats["error_timestamps"]) if stats["error_timestamps"] 
+                                           else stats["latest_timestamp"])
                         anomalies.append(Anomaly(
                             type="high_error_rate",
                             severity=severity,
-                            timestamp=datetime.now(timezone.utc),
+                            timestamp=anomaly_timestamp,
                             description=f"High error rate in container {container}: {error_rate:.1f}%",
                             details={
                                 "container": container,
@@ -783,10 +793,12 @@ class AnomalyDetectionService:
             
             # Detect unusual event spikes
             if total_events > 100:  # High event volume
+                # Use the timestamp of the most recent event
+                most_recent_event_timestamp = max(e.timestamp for e in events) if events else datetime.now(timezone.utc)
                 anomalies.append(Anomaly(
                     type="high_event_volume",
                     severity="MEDIUM",
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=most_recent_event_timestamp,
                     description=f"High Docker event volume: {total_events} events",
                     details={
                         "total_events": total_events,
