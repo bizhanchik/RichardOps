@@ -343,26 +343,6 @@ class QueryTranslator:
     def _handle_search_logs(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
         """Handle log search queries using PostgreSQL."""
         try:
-            # EMERGENCY FIX: Simple working response
-            return {
-                "intent": "search_logs",
-                "results": [
-                    {
-                        "timestamp": "2025-09-21T04:21:00Z",
-                        "level": "ERROR",
-                        "message": "Sample error log entry",
-                        "container": "webapp",
-                        "source": "emergency_fix"
-                    }
-                ],
-                "count": 1,
-                "data_source": "emergency_fix",
-                "query_info": {
-                    "original_query": parsed_query.original_query,
-                    "confidence": parsed_query.confidence,
-                    "entities": [entity.value for entity in parsed_query.entities]
-                }
-            }
             # Check for time-based queries first
             original_query = parsed_query.original_query.lower()
             
@@ -524,6 +504,29 @@ class QueryTranslator:
                             "query_type": "simple_fetch_all",
                             "confidence": 1.0,
                             "table_queried": "container_logs"
+                        }
+                    }
+            
+            # General fallback for queries that don't match specific patterns
+            # Return recent logs with basic filtering
+            if not any([
+                "error" in query_text.lower(),
+                "warning" in query_text.lower(), 
+                "alert" in query_text.lower(),
+                any(container in query_text.lower() for container in ["nginx", "postgres", "redis", "app", "web", "db", "api"])
+            ]):
+                result = self.fetch_latest_logs(db_session, limit=50)
+                if result["success"]:
+                    return {
+                        "intent": "search_logs",
+                        "results": result["data"]["logs"],
+                        "count": result["data"]["total_count"],
+                        "data_source": "postgresql",
+                        "query_info": {
+                            "query_type": "general_recent_logs",
+                            "confidence": 0.8,
+                            "table_queried": "container_logs",
+                            "note": "Showing recent logs as no specific criteria matched"
                         }
                     }
             

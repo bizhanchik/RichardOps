@@ -19,15 +19,7 @@ interface AnomalyData {
   recommendation?: string;
 }
 
-interface SystemHealth {
-  overall_score: number;
-  cpu_health: number;
-  memory_health: number;
-  disk_health: number;
-  network_health: number;
-  anomalies_detected: number;
-  last_updated: string;
-}
+
 
 interface QueryResult {
   success: boolean;
@@ -50,7 +42,6 @@ interface QueryResult {
     parameters?: Record<string, any>;
   };
   anomalies?: AnomalyData[];
-  system_health?: SystemHealth;
   insights?: string[];
   recommendations?: string[];
 }
@@ -72,23 +63,46 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
   const [recentAnomalies, setRecentAnomalies] = useState<AnomalyData[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Suggested queries for better UX - Updated list
+  // Improved suggested queries with better categorization and validated mappings
+  // Categorized suggestions for better organization - REDUCED SET
   const suggestedQueries = [
-    "🔍 Show recent error logs and stack traces",
-    "⚠️ Analyze current system anomalies and alerts",
-    "📊 Performance metrics and resource utilization",
-    "🗄️ Database connection health and query performance",
-    "🐳 Container status and orchestration health",
-    "💻 CPU, memory, and disk usage patterns",
-    "🛡️ Security incidents and threat detection",
-    "🚀 Deployment logs and pipeline status",
-    "🌐 Network latency and connectivity issues",
-    "📈 Application response times and throughput"
+    {
+      category: "📋 Log Analysis",
+      queries: [
+        "🔍 Show me recent logs",
+        "📋 Find error logs",
+        "🔧 Show system logs"
+      ]
+    }
   ];
+  
+  // Flatten all queries for backward compatibility
+  const allSuggestedQueries = suggestedQueries.flatMap(category => category.queries);
+  
+  // Deterministic mapping of suggestions to specific backend functions - validated mappings only
+  const suggestionMapping = {
+    "🔍 Show me recent logs": {
+      endpoint: "/api/nlp/query",
+      method: "POST",
+      payload: { query: "show me recent logs" },
+      intent: "search_logs"
+    },
+    "📋 Find error logs": {
+      endpoint: "/api/nlp/query",
+      method: "POST",
+      payload: { query: "find error logs" },
+      intent: "search_logs"
+    },
+    "🔧 Show system logs": {
+      endpoint: "/api/nlp/query",
+      method: "POST",
+      payload: { query: "show system logs" },
+      intent: "search_logs"
+    }
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -98,26 +112,7 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     scrollToBottom();
   }, [messages]);
 
-  // Fetch real system health data
-  useEffect(() => {
-    const fetchSystemHealth = async () => {
-      try {
-        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-        const response = await fetch(`${apiBaseUrl}/api/nlp/health`);
-        if (response.ok) {
-          const health = await response.json();
-          setSystemHealth(health);
-        }
-      } catch (error) {
-        console.error('Error fetching system health:', error);
-        // Don't set mock data, just leave it null
-      }
-    };
 
-    fetchSystemHealth();
-    const interval = setInterval(fetchSystemHealth, 30000); // Update every 30 seconds
-    return () => clearInterval(interval);
-  }, []);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isLoading) return;
@@ -133,70 +128,43 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     setInputValue('');
     setIsLoading(true);
 
+    const currentInput = inputValue;
+    setInputValue('');
+
     try {
-      // Call the NLP API
       const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
       const response = await fetch(`${apiBaseUrl}/api/nlp/query`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          query: userMessage.content,
-          include_context: true,
-          max_results: 50
-        }),
+        body: JSON.stringify({ query: currentInput }),
       });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const result: QueryResult = await response.json();
-      
-      // Generate enhanced response based on intent and confidence
-      const enhancedResponse = generateEnhancedResponse(result, userMessage.content);
+      const result = await response.json();
       
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: enhancedResponse,
-        sender: 'ai',
+        type: 'ai',
+        content: formatAIResponse(result),
         timestamp: new Date(),
-        queryResult: result,
-        confidence: result.confidence,
-        intent: result.intent
+        queryResult: result.result || result,
       };
 
       setMessages(prev => [...prev, aiMessage]);
-      
-      // Show confidence warning for low confidence responses
-      if (result.confidence < 0.4) {
-        console.warn(`Low confidence response: ${result.confidence}`);
-      }
-
     } catch (error) {
       console.error('Error sending message:', error);
-      
-      // Provide helpful error message based on error type
-      let errorMessage = "I'm having trouble processing your request right now. ";
-      
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        errorMessage += "It seems there's a connection issue. Please check if the backend service is running.";
-      } else if (error instanceof Error && error.message.includes('HTTP error')) {
-        errorMessage += "The server returned an error. Please try again in a moment.";
-      } else {
-        errorMessage += "Please try rephrasing your question or try again later.";
-      }
-      
-      const errorAiMessage: Message = {
+      const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: errorMessage,
-        sender: 'ai',
+        type: 'ai',
+        content: 'Sorry, I encountered an error while processing your request. Please try again.',
         timestamp: new Date(),
-        isError: true
       };
-
-      setMessages(prev => [...prev, errorAiMessage]);
+      setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
     }
@@ -518,189 +486,7 @@ Current system metrics and key performance indicators. Values are updated in rea
     return <Bot className="w-6 h-6 text-neon-purple-500" />;
   };
 
-  const renderSystemHealthWidget = () => {
-    if (!systemHealth) return null;
 
-    const getHealthColor = (score: number) => {
-      if (score >= 90) return 'text-neon-green-500';
-      if (score >= 70) return 'text-yellow-400';
-      return 'text-red-400';
-    };
-
-    const getHealthIcon = (score: number) => {
-      if (score >= 90) return <CheckCircle className="w-4 h-4" />;
-      if (score >= 70) return <AlertCircle className="w-4 h-4" />;
-      return <AlertTriangle className="w-4 h-4" />;
-    };
-
-    return (
-      <div className="bg-dark-card rounded-xl border border-gray-700 overflow-hidden">
-        <div className="bg-gradient-to-r from-neon-purple-500/10 to-neon-green-500/10 p-4 border-b border-gray-700">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-neon-green-500/20 rounded-lg">
-                <Activity className="w-5 h-5 text-neon-green-500" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-text-primary">System Health</h3>
-                <p className="text-sm text-text-muted">Real-time monitoring dashboard</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-3">
-              <div className="flex items-center space-x-2">
-                <div className="w-2 h-2 bg-neon-green-500 rounded-full animate-pulse"></div>
-                <span className="text-sm font-medium text-neon-green-500">LIVE</span>
-              </div>
-              <div className={`flex items-center gap-1 ${getHealthColor(systemHealth.overall_score)}`}>
-                {getHealthIcon(systemHealth.overall_score)}
-                <span className="font-bold">{systemHealth.overall_score}%</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div className="p-4">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="group bg-dark-surface hover:bg-dark-bg rounded-lg p-4 border border-gray-700 hover:border-neon-purple-500/50 transition-all duration-200">
-              <div className="flex items-center justify-between mb-3">
-                <div className="p-2 bg-neon-purple-500/20 rounded-lg group-hover:bg-neon-purple-500/30 transition-colors">
-                  <Cpu className="w-5 h-5 text-neon-purple-500" />
-                </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold text-text-primary">{systemHealth.cpu_health}%</div>
-                  <div className="text-xs text-text-muted">CPU Usage</div>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs">
-                  <span className="text-text-muted">Current</span>
-                  <span className={`font-medium ${getHealthColor(systemHealth.cpu_health)}`}>
-                    {systemHealth.cpu_health > 80 ? 'High' : systemHealth.cpu_health > 60 ? 'Medium' : 'Normal'}
-                  </span>
-                </div>
-                <div className="bg-gray-700 rounded-full h-2 overflow-hidden">
-                  <div 
-                    className={`h-2 rounded-full transition-all duration-500 ${
-                      systemHealth.cpu_health > 80 ? 'bg-gradient-to-r from-red-500 to-red-400' :
-                      systemHealth.cpu_health > 60 ? 'bg-gradient-to-r from-yellow-500 to-yellow-400' :
-                      'bg-gradient-to-r from-neon-purple-500 to-neon-green-500'
-                    }`}
-                    style={{ width: `${systemHealth.cpu_health}%` }}
-                  ></div>
-                </div>
-              </div>
-            </div>
-            
-            <div className="group bg-dark-surface hover:bg-dark-bg rounded-lg p-4 border border-gray-700 hover:border-neon-green-500/50 transition-all duration-200">
-              <div className="flex items-center justify-between mb-3">
-                <div className="p-2 bg-neon-green-500/20 rounded-lg group-hover:bg-neon-green-500/30 transition-colors">
-                  <Database className="w-5 h-5 text-neon-green-500" />
-                </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold text-text-primary">{systemHealth.memory_health}%</div>
-                  <div className="text-xs text-text-muted">Memory</div>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs">
-                  <span className="text-text-muted">Available</span>
-                  <span className={`font-medium ${getHealthColor(systemHealth.memory_health)}`}>
-                    {systemHealth.memory_health > 85 ? 'Critical' : systemHealth.memory_health > 70 ? 'Warning' : 'Healthy'}
-                  </span>
-                </div>
-                <div className="bg-gray-700 rounded-full h-2 overflow-hidden">
-                  <div 
-                    className={`h-2 rounded-full transition-all duration-500 ${
-                      systemHealth.memory_health > 85 ? 'bg-gradient-to-r from-red-500 to-red-400' :
-                      systemHealth.memory_health > 70 ? 'bg-gradient-to-r from-yellow-500 to-yellow-400' :
-                      'bg-gradient-to-r from-neon-green-500 to-neon-purple-500'
-                    }`}
-                    style={{ width: `${systemHealth.memory_health}%` }}
-                  ></div>
-                </div>
-              </div>
-            </div>
-            
-            <div className="group bg-dark-surface hover:bg-dark-bg rounded-lg p-4 border border-gray-700 hover:border-blue-500/50 transition-all duration-200">
-              <div className="flex items-center justify-between mb-3">
-                <div className="p-2 bg-blue-500/20 rounded-lg group-hover:bg-blue-500/30 transition-colors">
-                  <HardDrive className="w-5 h-5 text-blue-400" />
-                </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold text-text-primary">{systemHealth.disk_health}%</div>
-                  <div className="text-xs text-text-muted">Disk</div>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs">
-                  <span className="text-text-muted">Free Space</span>
-                  <span className={`font-medium ${getHealthColor(systemHealth.disk_health)}`}>
-                    {systemHealth.disk_health > 80 ? 'Good' : systemHealth.disk_health > 60 ? 'Low' : 'Critical'}
-                  </span>
-                </div>
-                <div className="bg-gray-700 rounded-full h-2 overflow-hidden">
-                  <div 
-                    className="bg-gradient-to-r from-blue-500 to-blue-400 h-2 rounded-full transition-all duration-500"
-                    style={{ width: `${systemHealth.disk_health}%` }}
-                  ></div>
-                </div>
-              </div>
-            </div>
-            
-            <div className="group bg-dark-surface hover:bg-dark-bg rounded-lg p-4 border border-gray-700 hover:border-orange-500/50 transition-all duration-200">
-              <div className="flex items-center justify-between mb-3">
-                <div className="p-2 bg-orange-500/20 rounded-lg group-hover:bg-orange-500/30 transition-colors">
-                  <Wifi className="w-5 h-5 text-orange-400" />
-                </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold text-text-primary">{systemHealth.network_health}%</div>
-                  <div className="text-xs text-text-muted">Network</div>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs">
-                  <span className="text-text-muted">Latency: 12ms</span>
-                  <span className="font-medium text-neon-green-500">Optimal</span>
-                </div>
-                <div className="bg-gray-700 rounded-full h-2 overflow-hidden">
-                  <div 
-                    className="bg-gradient-to-r from-orange-500 to-orange-400 h-2 rounded-full transition-all duration-500"
-                    style={{ width: `${systemHealth.network_health}%` }}
-                  ></div>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          {/* Quick Stats Row */}
-          <div className="mt-4 pt-4 border-t border-gray-700">
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center space-x-4">
-                <div className="flex items-center space-x-1">
-                  <div className="w-2 h-2 bg-neon-green-500 rounded-full"></div>
-                  <span className="text-text-muted">Uptime: 99.9%</span>
-                </div>
-                {systemHealth.anomalies_detected > 0 ? (
-                  <div className="flex items-center space-x-1">
-                    <AlertTriangle className="w-3 h-3 text-red-400" />
-                    <span className="text-red-400 font-medium">{systemHealth.anomalies_detected} Anomalies</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center space-x-1">
-                    <CheckCircle className="w-3 h-3 text-neon-green-500" />
-                    <span className="text-text-muted">No Issues</span>
-                  </div>
-                )}
-              </div>
-              <button className="text-xs text-neon-purple-500 hover:text-neon-purple-400 transition-colors">
-                View Details →
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   const renderQueryResult = (result: QueryResult) => {
     if (!result.success) return null;
@@ -904,8 +690,186 @@ Current system metrics and key performance indicators. Values are updated in rea
     );
   };
 
-  const handleSuggestedQuery = (query: string) => {
-    setInputValue(query);
+  const handleSuggestedQuery = async (query: string) => {
+    // Get the mapping for this specific suggestion
+    const mapping = suggestionMapping[query as keyof typeof suggestionMapping];
+    
+    if (!mapping) {
+      // Fallback to original behavior if no mapping found
+      setInputValue(query);
+      return;
+    }
+
+    // Create user message
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      content: query,
+      type: 'user',
+      timestamp: new Date(),
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setIsLoading(true);
+
+    try {
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+      let response: Response;
+
+      // Call the specific endpoint based on mapping
+      if (mapping.method === 'GET') {
+        const params = new URLSearchParams(mapping.params || {});
+        const url = `${apiBaseUrl}${mapping.endpoint}${params.toString() ? `?${params.toString()}` : ''}`;
+        response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+      } else {
+        // POST request
+        response = await fetch(`${apiBaseUrl}${mapping.endpoint}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(mapping.payload || {}),
+        });
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log('Backend response:', result); // Debug log
+      
+      // Extract the actual data from the response
+      let queryResult: QueryResult;
+      let formattedContent: string;
+      
+      if (result.success && result.result) {
+        // NLP endpoint response structure
+        queryResult = {
+          success: result.success,
+          intent: result.result.metadata?.intent || mapping.intent,
+          confidence: result.result.metadata?.confidence || 1.0,
+          results: result.result.results || [],
+          count: result.result.count || result.result.results?.length || 0,
+          processing_time_ms: result.processing_time_ms || result.result.metadata?.processing_time_ms || 0,
+          metadata: result.result.metadata,
+          query_info: {
+            query_type: mapping.intent,
+            method_called: 'process_query',
+            parameters: mapping.payload || mapping.params || {}
+          },
+          anomalies: result.result.anomalies,
+          insights: result.result.insights,
+          recommendations: result.result.recommendations
+        };
+        
+        formattedContent = formatAIResponse(result.result, mapping.intent);
+      } else if (result.anomalies || result.metrics || result.summary) {
+        // Analytics endpoint response structure
+        queryResult = {
+          success: true,
+          intent: mapping.intent,
+          confidence: 1.0,
+          results: result.anomalies || result.metrics || [result.summary],
+          count: result.anomalies?.length || result.metrics?.length || (result.summary ? 1 : 0),
+          processing_time_ms: 0,
+          anomalies: result.anomalies,
+          insights: result.insights,
+          recommendations: result.recommendations
+        };
+        
+        formattedContent = formatAIResponse(result, mapping.intent);
+      } else {
+        // Fallback for other response structures
+        queryResult = {
+          success: result.success || true,
+          intent: mapping.intent,
+          confidence: 1.0,
+          results: Array.isArray(result) ? result : [result],
+          count: Array.isArray(result) ? result.length : 1,
+          processing_time_ms: 0
+        };
+        
+        formattedContent = formatAIResponse(result, mapping.intent);
+      }
+      
+      // Create AI response message
+      const aiMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: formattedContent,
+        timestamp: new Date(),
+        queryResult: queryResult,
+      };
+
+      setMessages(prev => [...prev, aiMessage]);
+    } catch (error) {
+      console.error('Error calling specific function:', error);
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: `Sorry, I encountered an error while processing "${query}". Please try again.`,
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Helper function to format AI response based on intent
+  const formatAIResponse = (result: any, intent: string): string => {
+    if (intent === 'analytics_anomalies') {
+      const anomalies = result.anomalies || [];
+      return anomalies.length > 0 
+        ? `🚨 Found ${anomalies.length} anomalies that require attention. Check the details below for specific issues and recommendations.`
+        : '✅ No significant anomalies detected in your system. All metrics are within normal ranges.';
+    }
+    
+    if (intent === 'analytics_performance') {
+      const metrics = result.metrics || result.performance_metrics || [];
+      return metrics.length > 0
+        ? `📊 Performance metrics retrieved successfully. Found ${metrics.length} performance indicators. Here's your system performance overview:`
+        : '📊 Performance metrics retrieved. System performance data is available below.';
+    }
+    
+    if (intent === 'analytics_summary') {
+      return '📋 System summary generated successfully. Here\'s a comprehensive overview of your current system status and key metrics:';
+    }
+    
+    if (intent === 'analytics_metrics') {
+      const containers = result.containers || result.metrics || [];
+      return containers.length > 0
+        ? `🐳 Container analysis complete. Found ${containers.length} containers. Here are the current container metrics and health status:`
+        : '🐳 Container analysis complete. Container metrics and health status are available below.';
+    }
+    
+    if (intent === 'search_logs') {
+      const count = result.results?.length || result.count || 0;
+      if (count > 0) {
+        return `🔍 Found ${count} relevant log entries matching your search criteria. Here are the results:`;
+      } else {
+        return '🔍 No matching log entries found for your query. Try adjusting your search terms or time range.';
+      }
+    }
+    
+    if (intent === 'investigate') {
+      const findings = result.findings || result.investigation_results || [];
+      return findings.length > 0
+        ? `🛡️ Security investigation complete. Found ${findings.length} findings that require attention. Here are the investigation results:`
+        : '🛡️ Security investigation complete. No significant security issues detected in the specified timeframe.';
+    }
+    
+    if (intent === 'analyze_trends') {
+      return '🌐 Network analysis complete. Here are the connectivity patterns, latency insights, and trend analysis:';
+    }
+    
+    // Default response
+    return 'Analysis complete. Here are the results:';
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -938,39 +902,44 @@ Current system metrics and key performance indicators. Values are updated in rea
             </button>
           </div>
         </div>
-        {renderSystemHealthWidget()}
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6" ref={messagesEndRef}>
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Initial welcome screen with improved categorized suggestions */}
         {messages.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="inline-flex p-4 bg-dark-surface rounded-full mb-4">
-              <Bot className="w-12 h-12 text-neon-purple-500" />
-            </div>
-            <h2 className="text-2xl font-bold text-text-primary mb-2">Welcome to Log Analysis</h2>
+          <div className="text-center py-16">
+            <Bot className="w-16 h-16 text-neon-purple-500 mx-auto mb-6" />
+            <h2 className="text-2xl font-bold text-text-primary mb-2">Welcome to AI Assistant</h2>
             <p className="text-text-muted mb-8 max-w-md mx-auto">
               Ask me anything about your system logs, performance metrics, or anomalies. 
               I'll help you analyze and understand your monitoring data.
             </p>
             
-            {/* Quick Actions */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-w-4xl mx-auto">
-              {suggestedQueries.slice(0, 6).map((query, index) => (
-                <button
-                  key={index}
-                  onClick={() => handleSuggestedQuery(query)}
-                  className="group p-4 bg-dark-surface hover:bg-dark-card border border-gray-700 hover:border-neon-purple-500 rounded-xl transition-all duration-200 text-left"
-                >
-                  <div className="flex items-start space-x-3">
-                    <div className="text-2xl">{query.split(' ')[0]}</div>
-                    <div>
-                      <div className="text-text-primary font-medium group-hover:text-neon-purple-500 transition-colors">
-                        {query.substring(2)}
-                      </div>
-                    </div>
+            {/* Categorized Quick Actions */}
+            <div className="max-w-6xl mx-auto space-y-6">
+              {suggestedQueries.map((category, categoryIndex) => (
+                <div key={categoryIndex} className="text-left">
+                  <h3 className="text-lg font-semibold text-text-primary mb-4 text-center">{category.category}</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {category.queries.map((query, queryIndex) => (
+                      <button
+                        key={queryIndex}
+                        onClick={() => handleSuggestedQuery(query)}
+                        className="group p-4 bg-dark-surface hover:bg-dark-card border border-gray-700 hover:border-neon-purple-500 rounded-xl transition-all duration-200 text-left"
+                      >
+                        <div className="flex items-start space-x-3">
+                          <div className="text-2xl">{query.split(' ')[0]}</div>
+                          <div>
+                            <div className="text-text-primary font-medium group-hover:text-neon-purple-500 transition-colors">
+                              {query.substring(2)}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
                   </div>
-                </button>
+                </div>
               ))}
             </div>
           </div>
@@ -1010,8 +979,16 @@ Current system metrics and key performance indicators. Values are updated in rea
                         <span className="text-black">{message.content}</span>
                       ) : (
                         <div className="space-y-4">
+                          {/* Display the AI's formatted response content first */}
+                          <div className="text-text-primary leading-relaxed">
+                            {message.content}
+                          </div>
+                          
+                          {/* Then show the method call info and detailed results */}
                           {message.queryResult && <MethodCallComponent queryResult={message.queryResult} />}
                           {message.queryResult && renderQueryResult(message.queryResult)}
+                          
+                          {/* Show raw results only if they contain log entries or specific data */}
                           {message.queryResult?.results && message.queryResult.results.length > 0 && (
                             <div>
                               {message.queryResult.results[0]?.timestamp && 
@@ -1083,36 +1060,67 @@ Current system metrics and key performance indicators. Values are updated in rea
             </div>
           </div>
         )}
+        
+        {/* Scroll anchor - this div will be scrolled into view */}
+        <div ref={messagesEndRef} />
       </div>
 
       {/* Input Area */}
-      <div className="bg-dark-surface border-t border-gray-800 p-4">
-        <div className="flex items-center space-x-3">
-          <div className="flex-1 relative">
-            <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-text-muted" />
-            <input
-              type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Ask about logs, metrics, anomalies, or system health..."
-              className="w-full pl-12 pr-4 py-4 bg-dark-card border border-gray-700 rounded-xl text-text-primary placeholder-text-muted focus:outline-none focus:border-neon-purple-500 focus:ring-2 focus:ring-neon-purple-500/20 transition-all duration-200"
-            />
-          </div>
-          <button
-            onClick={handleSendMessage}
-            disabled={!inputValue.trim()}
-            className="px-6 py-4 bg-gradient-neon text-white rounded-xl hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center space-x-2 font-medium shadow-lg"
-          >
-            <Send className="w-5 h-5" />
-            <span>Analyze</span>
-          </button>
-        </div>
-        
-        {/* Quick Suggestions when typing */}
-         {inputValue.length > 0 && messages.length > 0 && (
+       <div className="bg-dark-surface border-t border-gray-800 p-4">
+         <div className="flex items-center space-x-3">
+           <div className="flex-1 relative">
+             <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-text-muted" />
+             <input
+               type="text"
+               value={inputValue}
+               onChange={(e) => setInputValue(e.target.value)}
+               onKeyPress={handleKeyPress}
+               placeholder="Ask about logs, metrics, anomalies, or system health..."
+               className="w-full pl-12 pr-4 py-4 bg-dark-card border border-gray-700 rounded-xl text-text-primary placeholder-text-muted focus:outline-none focus:border-neon-purple-500 focus:ring-2 focus:ring-neon-purple-500/20 transition-all duration-200"
+             />
+           </div>
+           <button
+             onClick={handleSendMessage}
+             disabled={!inputValue.trim()}
+             className="px-6 py-4 bg-gradient-neon text-white rounded-xl hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center space-x-2 font-medium shadow-lg"
+           >
+             <Send className="w-5 h-5" />
+             <span>Analyze</span>
+           </button>
+         </div>
+         
+         {/* Quick Suggestions - Always show when there are messages, improved formatting */}
+         {messages.length > 0 && (
+           <div className="mt-4 p-4 bg-dark-card border border-gray-700 rounded-xl">
+             <h4 className="text-sm font-medium text-text-primary mb-3 flex items-center">
+               <Lightbulb className="w-4 h-4 mr-2 text-neon-purple-500" />
+               Quick Actions
+             </h4>
+             <div className="grid grid-cols-3 gap-3">
+               {allSuggestedQueries.map((query, queryIndex) => (
+                 <button
+                   key={queryIndex}
+                   onClick={() => handleSuggestedQuery(query)}
+                   className="group p-3 bg-dark-surface hover:bg-neon-purple-500/10 border border-gray-700 hover:border-neon-purple-500 rounded-lg transition-all duration-200 text-left"
+                 >
+                   <div className="flex items-center space-x-2">
+                     <div className="text-lg">{query.split(' ')[0]}</div>
+                     <div className="flex-1 min-w-0">
+                       <div className="text-sm text-text-primary group-hover:text-neon-purple-500 transition-colors truncate">
+                         {query.substring(2)}
+                       </div>
+                     </div>
+                   </div>
+                 </button>
+               ))}
+             </div>
+           </div>
+         )}
+         
+         {/* Quick Suggestions when typing - use flattened array */}
+         {inputValue.length > 0 && (
            <div className="mt-3 flex flex-wrap gap-2">
-             {suggestedQueries.slice(0, 4).map((query, index) => (
+             {allSuggestedQueries.slice(0, 4).map((query, index) => (
                <button
                  key={index}
                  onClick={() => handleSuggestedQuery(query)}
@@ -1123,7 +1131,7 @@ Current system metrics and key performance indicators. Values are updated in rea
              ))}
            </div>
          )}
-      </div>
+       </div>
     </div>
   );
 };
