@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
-import { Search, RefreshCw, Terminal, X } from 'lucide-react';
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle, useContext } from 'react';
+import { Search, RefreshCw, Terminal, X, Filter, Download, Eye, Settings } from 'lucide-react';
 import { logsDataService, LogsDataService, type LogEntry } from '../../utils/logsDataService';
+import LogFilterPanel from '../shared/LogFilterPanel';
+import { ToastContext } from '../../contexts/ToastContext';
 
 interface LogsProps {
   searchQuery: string;
@@ -28,6 +30,17 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState({
+    timeRange: { start: '', end: '' },
+    levels: [] as string[],
+    containers: [] as string[],
+    hosts: [] as string[],
+    environments: [] as string[]
+  });
+  
+  // Toast context
+  const { showToast } = useContext(ToastContext);
 
   // Refs
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -45,7 +58,25 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
     try {
       let response;
       
+      // Build search parameters with filters
+      const searchParams: any = {
+        size: logCount
+      };
+      
+      // Apply filters
+      if (filters.levels.length > 0) {
+        searchParams.level = filters.levels.join(',');
+      }
+      if (filters.containers.length > 0) {
+        searchParams.container = filters.containers.join(',');
+      }
+      if (filters.timeRange.start && filters.timeRange.end) {
+        searchParams.start_time = filters.timeRange.start;
+        searchParams.end_time = filters.timeRange.end;
+      }
+      
       if (viewMode === 'search' && searchQuery.trim()) {
+        searchParams.query = searchQuery;
         response = await logsDataService.searchLogsWithLimit(searchQuery, 50);
       } else if (viewMode === 'hour') {
         response = await logsDataService.quickSearchLogs({
@@ -57,6 +88,13 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
         response = await logsDataService.getRecentLogsByCount(logCount);
       }
 
+      if (response.fallback) {
+        setError('Using fallback data - some logs may be missing');
+        showToast('warning', 'Using cached data', 'Some logs may be missing due to connection issues');
+      } else {
+        showToast('success', 'Logs loaded', `Successfully loaded ${response.documents?.length || 0} log entries`);
+      }
+
       // Reverse the logs to show newest at bottom
       const reversedLogs = (response.documents || []).reverse();
       setLogs(reversedLogs);
@@ -65,7 +103,9 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
       // Always scroll to bottom to show newest logs
       setTimeout(scrollToBottom, 100);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch logs');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch logs';
+      setError(errorMessage);
+      showToast('error', 'Failed to load logs', errorMessage);
       console.error('Error fetching logs:', err);
     } finally {
       setIsLoading(false);
@@ -77,10 +117,75 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
     fetchLogs: () => fetchLogs(true) // Always scroll to bottom when refreshing
   }));
 
+  // Export logs functionality
+  const exportLogs = (format: 'csv' | 'json') => {
+    try {
+      let content: string;
+      let filename: string;
+      let mimeType: string;
+
+      if (format === 'csv') {
+        const headers = ['Timestamp', 'Level', 'Container', 'Host', 'Environment', 'Message'];
+        const csvContent = [
+          headers.join(','),
+          ...logs.map(log => [
+            log.timestamp,
+            log.level || '',
+            log.container || '',
+            log.host || '',
+            log.environment || '',
+            `"${log.message.replace(/"/g, '""')}"` // Escape quotes in CSV
+          ].join(','))
+        ].join('\n');
+        
+        content = csvContent;
+        filename = `logs-${new Date().toISOString().split('T')[0]}.csv`;
+        mimeType = 'text/csv';
+      } else {
+        content = JSON.stringify(logs, null, 2);
+        filename = `logs-${new Date().toISOString().split('T')[0]}.json`;
+        mimeType = 'application/json';
+      }
+
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      showToast('success', 'Export completed', `Logs exported as ${filename}`);
+    } catch (err) {
+      showToast('error', 'Export failed', 'Failed to export logs');
+      console.error('Export error:', err);
+    }
+  };
+
+  // Filter handlers
+  const handleFilterChange = (newFilters: typeof filters) => {
+    setFilters(newFilters);
+    // Refetch logs with new filters
+    fetchLogs();
+  };
+
+  const clearFilters = () => {
+    setFilters({
+      timeRange: { start: '', end: '' },
+      levels: [],
+      containers: [],
+      hosts: [],
+      environments: []
+    });
+    fetchLogs();
+  };
+
   // Initial data fetch and when view mode changes
   useEffect(() => {
     fetchLogs();
-  }, [viewMode, viewMode === 'search' ? searchQuery : logCount]);
+  }, [viewMode, viewMode === 'search' ? searchQuery : logCount, filters]);
 
   // Only scroll to bottom on manual refresh, not on view mode changes
   // Removed auto-scroll to prevent unwanted scrolling when changing count buttons
@@ -89,23 +194,102 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
     <div className="h-full flex flex-col">
       {/* Terminal Body - Fixed Window Height */}
       <div className="flex-1 overflow-hidden">
-        <div className="h-[80vh] bg-white text-gray-800 font-mono text-base border border-gray-300 flex flex-col rounded-lg shadow-2xl">
-          {/* Terminal Header - Static */}
-          <div className="flex items-center space-x-2 p-6 pb-2 border-b border-gray-300 flex-shrink-0">
-            <div className="flex space-x-2">
-              <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-              <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-              <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-            </div>
-            <Terminal className="w-4 h-4 ml-4" />
-            <span className="text-gray-700">RichardOps Logs Terminal ({logs.length} entries)</span>
-            {isLoading && (
-              <div className="ml-3 flex items-center space-x-2">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                <span className="text-blue-600 text-sm">Loading...</span>
+        <div className="h-[80vh] bg-white text-gray-800 font-mono text-sm sm:text-base border border-gray-300 flex flex-col rounded-lg shadow-2xl">
+          {/* Terminal Header - Enhanced */}
+          <div className="flex items-center justify-between p-3 sm:p-6 pb-2 sm:pb-4 border-b border-gray-300 flex-shrink-0 flex-wrap gap-2">
+            <div className="flex items-center space-x-2 sm:space-x-4 flex-wrap min-w-0">
+              <div className="flex space-x-2 flex-shrink-0">
+                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
               </div>
-            )}
+              <div className="flex items-center space-x-2 min-w-0">
+                <Terminal className="w-4 h-4 flex-shrink-0" />
+                <span className="text-gray-700 font-medium text-sm sm:text-base truncate">RichardOps Logs Terminal</span>
+              </div>
+              <div className="flex items-center space-x-2 text-xs sm:text-sm text-gray-600 flex-wrap">
+                <span>({logs.length} entries)</span>
+                {lastUpdated && (
+                  <span className="text-xs hidden sm:inline">
+                    • Updated {lastUpdated.toLocaleTimeString()}
+                  </span>
+                )}
+              </div>
+              {isLoading && (
+                <div className="flex items-center space-x-2 flex-shrink-0">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                  <span className="text-blue-600 text-xs sm:text-sm">Loading...</span>
+                </div>
+              )}
+            </div>
+            
+            {/* Action Controls */}
+            <div className="flex items-center space-x-1 sm:space-x-2 flex-shrink-0">
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className={`inline-flex items-center px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors ${
+                  showFilters 
+                    ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' 
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+                title="Toggle filters"
+              >
+                <Filter className="w-4 h-4 mr-1" />
+                <span className="hidden sm:inline">Filters</span>
+                <span className="sm:hidden">F</span>
+                {(filters.levels.length > 0 || filters.containers.length > 0 || filters.timeRange.start) && (
+                  <span className="ml-1 px-1.5 py-0.5 bg-blue-500 text-white text-xs rounded-full">
+                    {filters.levels.length + filters.containers.length + (filters.timeRange.start ? 1 : 0)}
+                  </span>
+                )}
+              </button>
+              
+              <div className="relative group">
+                <button className="inline-flex items-center px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
+                  <Download className="w-4 h-4 mr-1" />
+                  <span className="hidden sm:inline">Export</span>
+                  <span className="sm:hidden">E</span>
+                </button>
+                <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-gray-200 rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                  <button
+                    onClick={() => exportLogs('csv')}
+                    className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    Export CSV
+                  </button>
+                  <button
+                    onClick={() => exportLogs('json')}
+                    className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    Export JSON
+                  </button>
+                </div>
+              </div>
+              
+              <button
+                onClick={() => fetchLogs(true)}
+                disabled={isLoading}
+                className="inline-flex items-center px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed rounded-md transition-colors"
+                title="Refresh logs"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
           </div>
+          
+          {/* Filter Panel */}
+          {showFilters && (
+            <div className="border-b border-gray-300 bg-gray-50">
+              <LogFilterPanel
+                filters={filters}
+                onFiltersChange={handleFilterChange}
+                onClearFilters={clearFilters}
+                availableContainers={Array.from(new Set(logs.map(log => log.container).filter(Boolean)))}
+                availableHosts={Array.from(new Set(logs.map(log => log.host).filter(Boolean)))}
+                availableEnvironments={Array.from(new Set(logs.map(log => log.environment).filter(Boolean)))}
+              />
+            </div>
+          )}
 
           {/* Scrollable Content Area */}
           <div 

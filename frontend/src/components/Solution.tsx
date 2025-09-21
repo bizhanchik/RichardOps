@@ -83,6 +83,14 @@ const Solution: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Mobile Overlay */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-20 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      
       {/* Left Sidebar - Fixed Position */}
       <div className={`fixed left-0 top-0 h-full z-30 transition-transform duration-300 ease-in-out ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-64'
@@ -92,7 +100,7 @@ const Solution: React.FC = () => {
       
       {/* Main Content */}
       <div className={`transition-all duration-300 ease-in-out ${
-        sidebarOpen ? 'ml-64' : 'ml-0'
+        sidebarOpen ? 'lg:ml-64 ml-0' : 'ml-0'
       }`}>
         {/* Header with Toggle Button and Time Range */}
         <div className={`sticky top-0 z-20 transition-all duration-300 ease-out ${
@@ -101,9 +109,9 @@ const Solution: React.FC = () => {
               ? 'backdrop-blur-md bg-black/30' 
               : 'backdrop-blur-md bg-white/30'
             : 'backdrop-blur-none bg-transparent'
-        } p-4`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
+        } p-2 sm:p-4`}>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center space-x-2 sm:space-x-4 flex-wrap">
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
                 className={`flex items-center justify-center w-10 h-10 rounded-lg border transition-all duration-300 ${
@@ -117,9 +125,9 @@ const Solution: React.FC = () => {
               
               {/* Logs Search Controls - Only show for Logs */}
               {activeView === 'logs' && (
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-2 sm:space-x-3 w-full sm:w-auto">
                   {/* Search */}
-                  <div className={`flex items-center border rounded-lg px-3 py-2 transition-colors duration-300 ${
+                  <div className={`flex items-center border rounded-lg px-2 sm:px-3 py-2 transition-colors duration-300 flex-1 sm:flex-none min-w-0 ${
                     headerOverTerminal 
                       ? 'bg-gray-800 border-gray-600' 
                       : 'bg-white border-gray-200'
@@ -132,7 +140,7 @@ const Solution: React.FC = () => {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Search logs..."
-                      className={`bg-transparent border-none outline-none flex-1 text-sm transition-colors duration-300 ${
+                      className={`bg-transparent border-none outline-none flex-1 text-sm transition-colors duration-300 min-w-0 ${
                         headerOverTerminal 
                           ? 'text-gray-200 placeholder-gray-400' 
                           : 'text-gray-900 placeholder-gray-500'
@@ -155,14 +163,14 @@ const Solution: React.FC = () => {
                   <button
                     onClick={() => setViewMode('search')}
                     disabled={!searchQuery.trim()}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-300 flex items-center space-x-2 disabled:opacity-50 ${
+                    className={`px-2 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-300 flex items-center space-x-1 sm:space-x-2 disabled:opacity-50 flex-shrink-0 ${
                       headerOverTerminal 
                         ? 'bg-emerald-700 hover:bg-emerald-600 text-white' 
                         : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                     }`}
                   >
                     <Search className="w-4 h-4" />
-                    <span>Search</span>
+                    <span className="hidden sm:inline">Search</span>
                   </button>
                 </div>
               )}
@@ -177,38 +185,40 @@ const Solution: React.FC = () => {
             </div>
 
             {/* Right Side Controls */}
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-1 sm:space-x-3 flex-wrap">
               {/* Logs Count Controls - Only show for Logs */}
               {activeView === 'logs' && (
                 <>
-                  {/* Log Count Buttons */}
-                  {[25, 50, 100, 200, 500].map((count) => (
-                    <button
-                      key={count}
-                      onClick={() => {
-                        setLogCount(count);
-                        setViewMode('count');
-                      }}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-300 ${
-                        viewMode === 'count' && logCount === count
-                          ? headerOverTerminal 
-                            ? 'bg-emerald-700 text-white' 
-                            : 'bg-emerald-600 text-white'
-                          : headerOverTerminal 
-                            ? 'bg-gray-800 text-gray-200 border border-gray-600 hover:bg-gray-700' 
-                            : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
-                      }`}
-                    >
-                      {count}
-                    </button>
-                  ))}
-
-
+                  {/* Log Count Buttons - Hide some on mobile */}
+                  <div className="flex items-center space-x-1 sm:space-x-2">
+                    {[25, 50, 100, 200, 500].map((count, index) => (
+                      <button
+                        key={count}
+                        onClick={() => {
+                          setLogCount(count);
+                          setViewMode('count');
+                        }}
+                        className={`px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors duration-300 ${
+                          index > 2 ? 'hidden sm:inline-flex' : ''
+                        } ${
+                          viewMode === 'count' && logCount === count
+                            ? headerOverTerminal 
+                              ? 'bg-emerald-700 text-white' 
+                              : 'bg-emerald-600 text-white'
+                            : headerOverTerminal 
+                              ? 'bg-gray-800 text-gray-200 border border-gray-600 hover:bg-gray-700' 
+                              : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        {count}
+                      </button>
+                    ))}
+                  </div>
 
                   {/* Refresh Button */}
                   <button
                     onClick={handleLogsRefresh}
-                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-300 flex items-center space-x-2 border ${
+                    className={`px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-300 flex items-center space-x-2 border ${
                       headerOverTerminal 
                         ? 'bg-gray-800 hover:bg-gray-700 text-gray-200 border-gray-600' 
                         : 'bg-white hover:bg-gray-50 text-gray-700 border-gray-200'
@@ -223,13 +233,13 @@ const Solution: React.FC = () => {
             
             {/* Time Range Selector - Only show for Graphs */}
             {activeView === 'graphs' && (
-              <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600 mr-2">Time Range:</span>
+              <div className="flex items-center space-x-1 sm:space-x-2 flex-wrap">
+                <span className="text-xs sm:text-sm text-gray-600 mr-1 sm:mr-2 hidden sm:inline">Time Range:</span>
                 {timeRangeOptions.map((option) => (
                   <button
                     key={option.value}
                     onClick={() => setTimeRange(option.value)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    className={`px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all duration-200 ${
                       timeRange === option.value
                         ? 'bg-emerald-600 text-white shadow-md'
                         : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
@@ -258,7 +268,7 @@ const Solution: React.FC = () => {
         </div>
         
         {/* Main Content Area */}
-        <div className={`${activeView === 'logs' ? 'p-6' : 'px-6 pt-2 pb-6'} ${activeView === 'ask-ai' || activeView === 'logs' ? 'overflow-hidden' : ''}`}>
+        <div className={`${activeView === 'logs' ? 'p-3 sm:p-6' : 'px-3 sm:px-6 pt-2 pb-3 sm:pb-6'} ${activeView === 'ask-ai' || activeView === 'logs' ? 'overflow-hidden' : ''}`}>
           <div className="transition-all duration-500 ease-in-out">
             {activeView === 'graphs' ? (
               <Dashboard timeRange={timeRange} />

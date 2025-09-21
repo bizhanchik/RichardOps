@@ -104,7 +104,7 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     const fetchSystemHealth = async () => {
       try {
         const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-        const response = await fetch(`${apiBaseUrl}/api/system/health`);
+        const response = await fetch(`${apiBaseUrl}/api/nlp/health`);
         if (response.ok) {
           const health = await response.json();
           setSystemHealth(health);
