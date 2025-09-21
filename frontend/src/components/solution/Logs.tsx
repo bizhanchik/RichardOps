@@ -1,24 +1,36 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { Search, RefreshCw, Terminal, X } from 'lucide-react';
 import { logsDataService, LogsDataService, type LogEntry } from '../../utils/logsDataService';
 
 interface LogsProps {
-  // Future props can be added here
+  searchQuery: string;
+  logCount: number;
+  viewMode: 'count' | 'hour' | 'search';
+  setSearchQuery: (query: string) => void;
+  setLogCount: (count: number) => void;
+  setViewMode: (mode: 'count' | 'hour' | 'search') => void;
 }
 
-const Logs: React.FC<LogsProps> = () => {
+interface LogsRef {
+  fetchLogs: () => void;
+}
+
+const Logs = forwardRef<LogsRef, LogsProps>(({ 
+  searchQuery, 
+  logCount, 
+  viewMode, 
+  setSearchQuery, 
+  setLogCount, 
+  setViewMode 
+}, ref) => {
   // State management
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [logCount, setLogCount] = useState(100);
-  const [viewMode, setViewMode] = useState<'count' | 'hour' | 'search'>('count');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   // Refs
   const logsEndRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Scroll to bottom function
   const scrollToBottom = () => {
@@ -26,7 +38,7 @@ const Logs: React.FC<LogsProps> = () => {
   };
 
   // Fetch logs based on view mode
-  const fetchLogs = async () => {
+  const fetchLogs = async (shouldScroll: boolean = false) => {
     setIsLoading(true);
     setError(null);
 
@@ -34,10 +46,7 @@ const Logs: React.FC<LogsProps> = () => {
       let response;
       
       if (viewMode === 'search' && searchQuery.trim()) {
-        response = await logsDataService.searchLogs(searchQuery, {
-          hours: 1,
-          size: 1000
-        });
+        response = await logsDataService.searchLogsWithLimit(searchQuery, 50);
       } else if (viewMode === 'hour') {
         response = await logsDataService.quickSearchLogs({
           hours: 1,
@@ -48,8 +57,13 @@ const Logs: React.FC<LogsProps> = () => {
         response = await logsDataService.getRecentLogsByCount(logCount);
       }
 
-      setLogs(response.documents || []);
+      // Reverse the logs to show newest at bottom
+      const reversedLogs = (response.documents || []).reverse();
+      setLogs(reversedLogs);
       setLastUpdated(new Date());
+      
+      // Always scroll to bottom to show newest logs
+      setTimeout(scrollToBottom, 100);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch logs');
       console.error('Error fetching logs:', err);
@@ -58,164 +72,49 @@ const Logs: React.FC<LogsProps> = () => {
     }
   };
 
-  // Handle search
-  const handleSearch = () => {
-    if (searchQuery.trim()) {
-      setViewMode('search');
-      fetchLogs();
-    }
-  };
-
-  // Handle key press in search
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleSearch();
-    }
-  };
-
-  // Handle view mode changes
-  const handleViewModeChange = (mode: 'count' | 'hour' | 'search') => {
-    setViewMode(mode);
-    if (mode === 'search' && !searchQuery.trim()) {
-      return; // Don't fetch if search is empty
-    }
-  };
+  // Expose fetchLogs function to parent component
+  useImperativeHandle(ref, () => ({
+    fetchLogs: () => fetchLogs(true) // Always scroll to bottom when refreshing
+  }));
 
   // Initial data fetch and when view mode changes
   useEffect(() => {
     fetchLogs();
-  }, [viewMode, logCount]);
+  }, [viewMode, viewMode === 'search' ? searchQuery : logCount]);
 
-  // Focus search input when opening
-  useEffect(() => {
-    if (searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
-  }, []);
-
-  // Scroll to bottom when new logs arrive
-  useEffect(() => {
-    if (logs.length > 0) {
-      setTimeout(scrollToBottom, 100);
-    }
-  }, [logs]);
+  // Only scroll to bottom on manual refresh, not on view mode changes
+  // Removed auto-scroll to prevent unwanted scrolling when changing count buttons
 
   return (
     <div className="h-full flex flex-col">
-      {/* Header Controls */}
-      <div className="flex-shrink-0 bg-black border-b border-gray-800 p-4 rounded-t-xl">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          {/* Left Side - View Mode Controls */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-3 sm:space-y-0 sm:space-x-3">
-            {/* Search */}
-            <div className="flex items-center bg-gray-800 rounded-lg border border-gray-600 px-3 py-2 w-full sm:w-80">
-              <Search className="w-4 h-4 text-gray-400 mr-2 flex-shrink-0" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Search logs..."
-                className="bg-transparent border-none outline-none flex-1 text-sm placeholder-gray-400 text-white"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="text-gray-400 hover:text-gray-200 ml-2 flex-shrink-0"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-            
-            <button
-              onClick={handleSearch}
-              disabled={isLoading || !searchQuery.trim()}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2 disabled:opacity-50"
-            >
-              <Search className="w-4 h-4" />
-              <span>Search</span>
-            </button>
-          </div>
-
-          {/* Right Side - Controls */}
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Log Count Buttons */}
-            {[25, 50, 100, 200, 500].map((count) => (
-              <button
-                key={count}
-                onClick={() => {
-                  setLogCount(count);
-                  handleViewModeChange('count');
-                }}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  viewMode === 'count' && logCount === count
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-gray-700 text-gray-200 border border-gray-600 hover:bg-gray-600'
-                }`}
-              >
-                {count}
-              </button>
-            ))}
-
-            {/* OR separator */}
-            <span className="text-gray-400 text-sm mx-1">or</span>
-
-            {/* Last Hour Button */}
-            <button
-              onClick={() => handleViewModeChange('hour')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                viewMode === 'hour'
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-gray-700 text-gray-200 border border-gray-600 hover:bg-gray-600'
-              }`}
-            >
-              Last Hour
-            </button>
-
-            {/* Refresh Button */}
-            <button
-              onClick={fetchLogs}
-              disabled={isLoading}
-              className="bg-gray-700 hover:bg-gray-600 text-gray-200 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2 border border-gray-600 disabled:opacity-50 ml-2"
-              title="Refresh"
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-        </div>
-
-        {/* Status Bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-gray-300 mt-3">
-          <div className="flex flex-col sm:flex-row sm:items-center space-y-1 sm:space-y-0 sm:space-x-4">
-            <span>
-              Showing {logs.length} logs
-              {viewMode === 'search' && searchQuery && ` for "${searchQuery}"`}
-              {viewMode === 'hour' && ' from last hour'}
-              {viewMode === 'count' && ` (last ${logCount})`}
-            </span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="truncate text-xs text-gray-400">
-              {lastUpdated ? `Updated: ${lastUpdated.toLocaleTimeString()}` : 'Not updated'}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Logs Display - Terminal Style (Full Height) */}
-      <div className="flex-1 overflow-hidden p-4">
-        <div className="h-full bg-black text-green-400 font-mono text-sm rounded-xl border border-gray-800 flex flex-col">
-          {/* Terminal Header */}
+      {/* Terminal Body - Fixed Window Height */}
+      <div className="flex-1 overflow-hidden">
+        <div className="h-[600px] bg-black text-green-400 font-mono text-sm border border-gray-700 flex flex-col rounded-lg shadow-2xl">
+          {/* Terminal Header - Static */}
           <div className="flex items-center space-x-2 p-6 pb-2 border-b border-gray-700 flex-shrink-0">
-            <Terminal className="w-4 h-4" />
-            <span className="text-green-300">RichardOps Logs Terminal</span>
-            <span className="text-gray-500">({logs.length} entries)</span>
+            <div className="flex space-x-2">
+              <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+              <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+              <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+            </div>
+            <Terminal className="w-4 h-4 ml-4" />
+            <span className="text-green-300">RichardOps Logs Terminal ({logs.length} entries)</span>
+            {isLoading && (
+              <div className="ml-3 flex items-center space-x-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-400"></div>
+                <span className="text-yellow-400 text-sm">Loading...</span>
+              </div>
+            )}
           </div>
 
           {/* Scrollable Content Area */}
-          <div className="flex-1 overflow-y-auto p-6 pt-4">
+          <div 
+            className="flex-1 overflow-y-auto p-6 pt-4 scrollbar-thin scrollbar-track-black scrollbar-thumb-gray-800 hover:scrollbar-thumb-gray-700"
+            style={{
+              scrollbarColor: '#374151 #000000',
+              scrollbarWidth: 'thin'
+            }}
+          >
             {/* Error State */}
             {error && (
               <div className="text-red-400 mb-4 p-3 bg-red-900/20 border border-red-800 rounded">
@@ -224,13 +123,7 @@ const Logs: React.FC<LogsProps> = () => {
               </div>
             )}
 
-            {/* Loading State */}
-            {isLoading && (
-              <div className="text-yellow-400 mb-4 flex items-center space-x-2">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-400"></div>
-                <span>Loading logs...</span>
-              </div>
-            )}
+
 
             {/* Empty State */}
             {!isLoading && logs.length === 0 && !error && (
@@ -307,6 +200,8 @@ const Logs: React.FC<LogsProps> = () => {
       </div>
     </div>
   );
-};
+});
+
+Logs.displayName = 'Logs';
 
 export default Logs;

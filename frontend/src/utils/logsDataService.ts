@@ -125,6 +125,41 @@ class LogsDataService {
   }
 
   /**
+   * Search logs using the direct endpoint format with limit
+   */
+  async searchLogsWithLimit(query: string, limit: number = 50): Promise<LogSearchResponse> {
+    try {
+      const searchParams = new URLSearchParams();
+      searchParams.append('q', query);
+      searchParams.append('limit', limit.toString());
+
+      const response = await fetch(`${this.apiUrl}/logs/search?${searchParams}`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Handle direct array response format
+      if (Array.isArray(data)) {
+        return {
+          total: data.length,
+          total_relation: 'eq',
+          documents: data,
+          took: 0,
+          fallback: false
+        };
+      }
+      
+      return data;
+    } catch (error) {
+      console.error('Error searching logs with limit:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get available filter options for dropdowns
    */
   async getFilterOptions(): Promise<LogFilterOptions> {
