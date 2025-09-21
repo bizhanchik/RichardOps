@@ -228,16 +228,16 @@ class NLPQueryParser:
             try:
                 intent, confidence = self.improved_classifier.classify_intent(query)
                 
-                # If confidence is very low, try keyword-based fallback
-                if confidence < 0.3:
+                # EMERGENCY FIX: Lower all thresholds aggressively
+                if confidence < 0.1:  # Only fallback if extremely low
                     keyword_intent, keyword_confidence = self._classify_with_keywords(query_lower)
                     
                     # Use keyword result if it has higher confidence
                     if keyword_confidence > confidence:
                         return keyword_intent, keyword_confidence
                     
-                    # If both are low confidence, provide helpful suggestions
-                    if confidence < 0.2 and keyword_confidence < 0.2:
+                    # If both are extremely low confidence, provide helpful suggestions
+                    if confidence < 0.05 and keyword_confidence < 0.05:
                         return QueryIntent.UNKNOWN, 0.1  # Very low confidence
                 
                 return intent, confidence
@@ -287,12 +287,12 @@ class NLPQueryParser:
         best_intent = max(intent_scores, key=intent_scores.get)
         confidence = intent_scores[best_intent]
         
-        # Apply improved confidence thresholds
-        if confidence < 0.15:
+        # EMERGENCY FIX: Apply very low confidence thresholds
+        if confidence < 0.05:
             return QueryIntent.UNKNOWN, confidence
-        elif confidence < 0.3:
+        elif confidence < 0.1:
             # Low confidence - suggest alternatives
-            return best_intent, confidence * 0.8
+            return best_intent, confidence * 0.9
         else:
             return best_intent, min(confidence, 0.9)
     

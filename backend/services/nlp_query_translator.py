@@ -325,6 +325,15 @@ class QueryTranslator:
             return self._handle_investigate(parsed_query, db_session)
         elif parsed_query.intent == QueryIntent.ANALYZE_TRENDS:
             return self._handle_analyze_trends(parsed_query, db_session)
+        # EMERGENCY FIX: Handle new analytics intents by mapping them to existing handlers
+        elif parsed_query.intent == QueryIntent.ANALYTICS_SUMMARY:
+            return self._handle_generate_report(parsed_query, db_session)  # Map to report generation
+        elif parsed_query.intent == QueryIntent.ANALYTICS_ANOMALIES:
+            return self._handle_show_alerts(parsed_query, db_session)  # Map to alerts
+        elif parsed_query.intent == QueryIntent.ANALYTICS_PERFORMANCE:
+            return self._handle_analyze_trends(parsed_query, db_session)  # Map to trends
+        elif parsed_query.intent == QueryIntent.ANALYTICS_METRICS:
+            return self._handle_analyze_trends(parsed_query, db_session)  # Map to trends
         else:
             return {
                 "error": f"Unsupported query intent: {parsed_query.intent}",

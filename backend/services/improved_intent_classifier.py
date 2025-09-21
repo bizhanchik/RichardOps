@@ -352,10 +352,11 @@ class ImprovedIntentClassifier:
         confidence = intent_scores[best_intent]
         
         # Apply improved confidence thresholds
-        if confidence < 0.2:  # Very low similarity
-            return QueryIntent.UNKNOWN, confidence
-        elif confidence < 0.35:  # Low similarity - return with warning
-            return best_intent, confidence * 0.7  # Reduce confidence
+        # EMERGENCY FIX: Lower all thresholds aggressively
+        if confidence < 0.05:  # Very low similarity
+            return QueryIntent.UNKNOWN, 0.1
+        elif confidence < 0.15:  # Low similarity - return with warning
+            return best_intent, confidence * 0.9  # Reduce confidence slightly
         else:
             return best_intent, min(confidence, 0.95)  # Cap confidence at 95%
 
