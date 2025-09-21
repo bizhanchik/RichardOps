@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { PanelRightClose, Trash2, Search, RefreshCw, X } from 'lucide-react';
 import Sidebar from './solution/Sidebar';
 import Dashboard from './solution/Dashboard';
-import AskAI from './solution/AskAI';
+
 import Logs from './solution/Logs';
 import Analytics from './solution/Analytics';
 import { timeUtils } from '../utils/timeUtils';
@@ -285,7 +285,9 @@ const Solution: React.FC = () => {
             ) : activeView === 'analytics' ? (
               <Analytics />
             ) : (
-              <AskAI sidebarOpen={sidebarOpen} />
+              <div className="flex items-center justify-center h-full text-gray-500">
+                Select a view from the sidebar
+              </div>
             )}
           </div>
         </div>
