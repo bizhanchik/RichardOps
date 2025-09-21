@@ -12,7 +12,6 @@ interface LogEntry {
 interface QueryResult {
   success: boolean;
   result?: {
-    intent: string;
     results: any[];
     count: number;
     data_source?: string;
@@ -20,6 +19,13 @@ interface QueryResult {
       query_type: string;
       method_called?: string;
       parameters?: Record<string, any>;
+    };
+    metadata?: {
+      intent: string;
+      confidence: number;
+      query_processed_at: string;
+      entities_found: number;
+      processing_time_ms: number;
     };
   };
   processing_time_ms?: number;
@@ -91,16 +97,17 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
 
       const result = await response.json();
       
-      // Create AI response with query result
-      const aiResponse: Message = {
-        id: (Date.now() + 1).toString(),
-        type: 'ai',
-        content: generateResponseContent(result),
-        timestamp: new Date(),
-        queryResult: result
-      };
-
-      setMessages(prev => [...prev, aiResponse]);
+      // Create AI response with query result (only if there are results to show)
+       if (result.result?.results && result.result.results.length > 0) {
+         const aiResponse: Message = {
+           id: (Date.now() + 1).toString(),
+           type: 'ai',
+           content: '', // No content needed, only showing results
+           timestamp: new Date(),
+           queryResult: result
+         };
+         setMessages(prev => [...prev, aiResponse]);
+       }
     } catch (error) {
       console.error('Error calling NLP API:', error);
       
@@ -131,15 +138,13 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
       return `I encountered an error: ${result.error || 'Unknown error occurred'}`;
     }
 
-    const processingTime = result.processing_time_ms || 0;
-    const queryType = result.result?.intent || 'unknown';
     const totalResults = result.result?.count || 0;
     
     if (totalResults === 0) {
-      return `I processed your query but didn't find any matching results. The query was interpreted as "${queryType}" and executed in ${processingTime.toFixed(2)}ms.`;
+      return `No results found.`;
     }
 
-    return `Found ${totalResults} result${totalResults !== 1 ? 's' : ''} for your "${queryType}" query. Execution completed in ${processingTime.toFixed(2)}ms.`;
+    return `Here are your results:`;
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -172,6 +177,92 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     );
   };
 
+  const extractLogLevel = (message: string): string => {
+    const levelMatch = message.match(/\[(ERROR|WARN|WARNING|INFO|DEBUG)\]/i);
+    return levelMatch ? levelMatch[1].toUpperCase() : 'INFO';
+  };
+
+  const formatLogTimestamp = (timestamp: string): string => {
+    const date = new Date(timestamp);
+    return date.toLocaleString('en-US', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+  };
+
+  const TerminalLogDisplay: React.FC<{ logs: any[] }> = ({ logs }) => {
+    // Sort logs by timestamp (newest first for terminal-like display)
+    const sortedLogs = [...logs].sort((a, b) => 
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+
+    return (
+      <div className="bg-gray-900 border border-gray-700 rounded-lg overflow-hidden">
+        <div className="bg-gray-800 px-4 py-2 border-b border-gray-700">
+          <div className="flex items-center space-x-2">
+            <Terminal className="w-4 h-4 text-green-400" />
+            <span className="text-green-400 font-mono text-sm">Container Logs</span>
+            <span className="text-gray-400 text-xs">({logs.length} entries)</span>
+          </div>
+        </div>
+        
+        <div className="max-h-96 overflow-y-auto">
+          {sortedLogs.map((log, index) => {
+            const logLevel = extractLogLevel(log.message);
+            const levelColors = {
+              'ERROR': 'text-red-400',
+              'WARN': 'text-yellow-400',
+              'WARNING': 'text-yellow-400',
+              'INFO': 'text-blue-400',
+              'DEBUG': 'text-gray-400',
+            };
+            const levelColor = levelColors[logLevel as keyof typeof levelColors] || 'text-gray-400';
+            
+            return (
+              <div key={log.id || index} className="border-b border-gray-800 last:border-b-0">
+                <div className="px-4 py-2 hover:bg-gray-800 transition-colors">
+                  <div className="flex items-start space-x-3 font-mono text-xs">
+                    {/* Timestamp */}
+                    <span className="text-gray-500 flex-shrink-0 w-20">
+                      {formatLogTimestamp(log.timestamp)}
+                    </span>
+                    
+                    {/* Container */}
+                    <span className="text-cyan-400 flex-shrink-0 w-24 truncate">
+                      {log.container.replace('/repathon-', '').replace('-1', '')}
+                    </span>
+                    
+                    {/* Log Level */}
+                    <span className={`${levelColor} flex-shrink-0 w-12`}>
+                      [{logLevel}]
+                    </span>
+                    
+                    {/* Message */}
+                    <span className="text-gray-300 flex-1 leading-relaxed">
+                      {log.message.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s+/, '').replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+/, '')}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        
+        {logs.length > 20 && (
+          <div className="bg-gray-800 px-4 py-2 border-t border-gray-700">
+            <span className="text-gray-400 text-xs">
+              Showing latest {Math.min(logs.length, 20)} entries • Use filters to narrow results
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const LogEntryComponent: React.FC<{ log: LogEntry; index: number }> = ({ log, index }) => (
     <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-2 font-mono text-xs">
       <div className="flex items-center justify-between mb-2">
@@ -194,7 +285,7 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
 
   const MethodCallComponent: React.FC<{ queryResult: QueryResult }> = ({ queryResult }) => {
     const methodCalled = queryResult.result?.query_info?.method_called || 'process_query';
-    const queryType = queryResult.result?.intent || 'unknown';
+    const queryType = queryResult.result?.metadata?.intent || 'unknown';
     const executionTime = queryResult.processing_time_ms || 0;
     const totalResults = queryResult.result?.count || 0;
     const parameters = queryResult.result?.query_info?.parameters || {};
@@ -302,68 +393,66 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
               className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div className={`flex max-w-[85%] ${message.type === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start space-x-3`}>
-                {/* Avatar */}
-                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                  message.type === 'user' 
-                    ? 'bg-emerald-600 text-white ml-3' 
-                    : 'bg-blue-100 text-blue-600 mr-3'
-                }`}>
-                  {message.type === 'user' ? (
-                    <User className="w-4 h-4" />
-                  ) : (
-                    <Bot className="w-4 h-4" />
-                  )}
-                </div>
-                
-                {/* Message Bubble */}
-                <div className={`rounded-2xl px-4 py-3 ${
-                  message.type === 'user'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-gray-100 text-gray-900'
-                }`}>
-                  <p className="text-sm leading-relaxed">{message.content}</p>
-                  <p className={`text-xs mt-2 ${
-                    message.type === 'user' ? 'text-emerald-100' : 'text-gray-500'
-                  }`}>
-                    {formatTime(message.timestamp)}
-                  </p>
-                </div>
-                
-                {/* Query Result Display */}
-                {message.type === 'ai' && message.queryResult && (
-                  <div className="mt-4 max-w-4xl">
-                    <MethodCallComponent queryResult={message.queryResult} />
+                {message.type === 'user' ? (
+                  <>
+                    {/* Avatar */}
+                    <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-emerald-600 text-white ml-3">
+                      <User className="w-4 h-4" />
+                    </div>
                     
-                    {message.queryResult.result?.results && message.queryResult.result.results.length > 0 && (
-                      <div className="bg-white border border-gray-200 rounded-lg p-4">
-                        <div className="flex items-center space-x-2 mb-4">
-                          <Terminal className="w-4 h-4 text-gray-600" />
-                          <h4 className="font-semibold text-gray-900">
-                            Query Results ({message.queryResult.result.results.length})
-                          </h4>
-                        </div>
-                        
-                        <div className="max-h-96 overflow-y-auto space-y-2">
-                          {message.queryResult.result.results.slice(0, 10).map((result, index) => (
-                            <div key={index} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                              <pre className="text-xs font-mono text-gray-700 overflow-x-auto whitespace-pre-wrap">
-                                {JSON.stringify(result, null, 2)}
-                              </pre>
+                    {/* Message Bubble */}
+                    <div className="rounded-2xl px-4 py-3 bg-emerald-600 text-white">
+                      <p className="text-sm leading-relaxed">{message.content}</p>
+                      <p className="text-xs mt-2 text-emerald-100">
+                        {formatTime(message.timestamp)}
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  /* AI message - only show query results, no chat bubble */
+                  message.queryResult && (
+                    <div className="w-full max-w-4xl">
+                      {message.queryResult.result?.results && message.queryResult.result.results.length > 0 && (
+                      <div className="mt-4">
+                        {/* Check if results look like logs (have timestamp, container, message fields) */}
+                        {message.queryResult.result.results[0]?.timestamp && 
+                         message.queryResult.result.results[0]?.container && 
+                         message.queryResult.result.results[0]?.message ? (
+                          <TerminalLogDisplay logs={message.queryResult.result.results} />
+                        ) : (
+                          /* Fallback to JSON display for non-log results */
+                          <div className="bg-white border border-gray-200 rounded-lg p-4">
+                            <div className="flex items-center space-x-2 mb-4">
+                              <Terminal className="w-4 h-4 text-gray-600" />
+                              <h4 className="font-semibold text-gray-900">
+                                Query Results ({message.queryResult.result.results.length})
+                              </h4>
                             </div>
-                          ))}
-                          
-                          {message.queryResult.result.results.length > 10 && (
-                            <div className="text-center py-2">
-                              <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-                                ... and {message.queryResult.result.results.length - 10} more entries
-                              </span>
+                            
+                            <div className="max-h-96 overflow-y-auto space-y-2">
+                              {message.queryResult.result.results.slice(0, 10).map((result, index) => (
+                                <div key={index} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                                  <pre className="text-xs font-mono text-gray-700 overflow-x-auto whitespace-pre-wrap">
+                                    {JSON.stringify(result, null, 2)}
+                                  </pre>
+                                </div>
+                              ))}
+                              
+                              {message.queryResult.result.results.length > 10 && (
+                                <div className="text-center py-2">
+                                  <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                                    ... and {message.queryResult.result.results.length - 10} more entries
+                                  </span>
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </div>
                     )}
-                  </div>
-                )}
+                     </div>
+                   )
+                 )}
               </div>
             </div>
           ))}

@@ -22,6 +22,10 @@ class QueryIntent(Enum):
     INVESTIGATE = "investigate"
     SHOW_ALERTS = "show_alerts"
     ANALYZE_TRENDS = "analyze_trends"
+    ANALYTICS_SUMMARY = "analytics_summary"
+    ANALYTICS_ANOMALIES = "analytics_anomalies"
+    ANALYTICS_PERFORMANCE = "analytics_performance"
+    ANALYTICS_METRICS = "analytics_metrics"
     UNKNOWN = "unknown"
 
 
@@ -64,11 +68,22 @@ class NLPQueryParser:
     robust natural language query processing.
     """
     
-    def __init__(self):
+    def __init__(self, use_improved_classifier: bool = True):
         """Initialize the NLP query parser with intent patterns and entity extractors."""
         self.intent_patterns = self._build_intent_patterns()
         self.entity_patterns = self._build_entity_patterns()
         self.time_patterns = self._build_time_patterns()
+        self.use_improved_classifier = use_improved_classifier
+        
+        # Initialize improved classifier if enabled
+        if self.use_improved_classifier:
+            try:
+                from improved_intent_classifier import get_improved_classifier
+                self.improved_classifier = get_improved_classifier()
+            except Exception as e:
+                print(f"Warning: Could not initialize improved classifier: {e}")
+                self.use_improved_classifier = False
+                self.improved_classifier = None
         
     def _build_intent_patterns(self) -> Dict[QueryIntent, List[str]]:
         """Build patterns for intent classification with improved keywords."""
@@ -97,6 +112,26 @@ class NLPQueryParser:
                 "trends", "patterns", "statistics", "metrics", "analytics",
                 "over time", "historical", "compare", "growth", "changes",
                 "performance", "usage", "behavior", "evolution", "progression"
+            ],
+            QueryIntent.ANALYTICS_SUMMARY: [
+                "summary", "overview", "status", "comprehensive", "system summary",
+                "analytics summary", "daily summary", "weekly summary", "quick overview",
+                "summarize", "provide overview", "system status"
+            ],
+            QueryIntent.ANALYTICS_ANOMALIES: [
+                "anomalies", "anomaly", "unusual", "suspicious", "abnormal", "outliers",
+                "irregular", "detect anomalies", "find anomalies", "unusual activity",
+                "suspicious patterns", "abnormal behavior", "outlier detection"
+            ],
+            QueryIntent.ANALYTICS_PERFORMANCE: [
+                "performance", "performing", "performance metrics", "performance report",
+                "performance data", "performance analytics", "performance statistics",
+                "performance insights", "resource utilization", "system performance"
+            ],
+            QueryIntent.ANALYTICS_METRICS: [
+                "metrics", "metric", "measurements", "key metrics", "system metrics",
+                "analytics metrics", "operational metrics", "metric data", "metric trends",
+                "metric analysis", "metric dashboard"
             ]
         }
     
@@ -156,8 +191,11 @@ class NLPQueryParser:
         """
         query_lower = query.lower()
         
-        # Classify intent
-        intent, intent_confidence = self._classify_intent(query_lower)
+        # Classify intent using improved classifier if available
+        if self.use_improved_classifier and self.improved_classifier:
+            intent, intent_confidence = self.improved_classifier.classify_intent(query)
+        else:
+            intent, intent_confidence = self._classify_intent(query_lower)
         
         # Extract entities
         entities = self._extract_entities(query)

@@ -15,6 +15,8 @@ from db_models import (
     MetricsModel, EmailNotificationsModel
 )
 from services.nlp_query_parser import ParsedQuery, QueryIntent, EntityType
+from services.summary_service import summary_service
+from services.anomaly_detection import anomaly_detector
 
 
 class QueryTranslator:
@@ -42,7 +44,11 @@ class QueryTranslator:
             QueryIntent.SHOW_ALERTS: self._handle_show_alerts,
             QueryIntent.GENERATE_REPORT: self._handle_generate_report,
             QueryIntent.INVESTIGATE: self._handle_investigate,
-            QueryIntent.ANALYZE_TRENDS: self._handle_analyze_trends
+            QueryIntent.ANALYZE_TRENDS: self._handle_analyze_trends,
+            QueryIntent.ANALYTICS_SUMMARY: self._handle_analytics_summary,
+            QueryIntent.ANALYTICS_ANOMALIES: self._handle_analytics_anomalies,
+            QueryIntent.ANALYTICS_PERFORMANCE: self._handle_analytics_performance,
+            QueryIntent.ANALYTICS_METRICS: self._handle_analytics_metrics
         }
     
     def fetch_all_logs(self, db_session: Session, limit: int = 1000, offset: int = 0) -> Dict[str, Any]:
@@ -1242,6 +1248,156 @@ class QueryTranslator:
         
         return None
 
+    def _handle_analytics_summary(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
+        """Handle analytics summary requests."""
+        try:
+            # Extract time period from query
+            time_period = "24h"  # default
+            if parsed_query.time_range:
+                if "week" in parsed_query.original_query.lower():
+                    time_period = "7d"
+                elif "month" in parsed_query.original_query.lower():
+                    time_period = "30d"
+                elif "hour" in parsed_query.original_query.lower():
+                    time_period = "1h"
+            
+            # Get summary from analytics service
+            summary = summary_service.get_system_summary(time_period)
+            
+            return {
+                "success": True,
+                "data": summary,
+                "query_type": "analytics_summary",
+                "message": f"System summary for the last {time_period}",
+                "metadata": {
+                    "time_period": time_period,
+                    "query": parsed_query.original_query
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "query_type": "analytics_summary",
+                "message": "Failed to generate analytics summary"
+            }
+
+    def _handle_analytics_anomalies(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
+        """Handle anomaly detection requests."""
+        try:
+            # Extract time period and severity from query
+            time_period = "24h"  # default
+            severity = None
+            
+            if parsed_query.time_range:
+                if "week" in parsed_query.original_query.lower():
+                    time_period = "7d"
+                elif "month" in parsed_query.original_query.lower():
+                    time_period = "30d"
+                elif "hour" in parsed_query.original_query.lower():
+                    time_period = "1h"
+            
+            # Extract severity from query
+            query_lower = parsed_query.original_query.lower()
+            if "critical" in query_lower:
+                severity = "critical"
+            elif "high" in query_lower:
+                severity = "high"
+            elif "medium" in query_lower:
+                severity = "medium"
+            elif "low" in query_lower:
+                severity = "low"
+            
+            # Get anomalies from detection service
+            anomalies = anomaly_detector.detect_anomalies(time_period, severity)
+            
+            return {
+                "success": True,
+                "data": anomalies,
+                "query_type": "analytics_anomalies",
+                "message": f"Anomalies detected in the last {time_period}",
+                "metadata": {
+                    "time_period": time_period,
+                    "severity_filter": severity,
+                    "query": parsed_query.original_query
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "query_type": "analytics_anomalies",
+                "message": "Failed to detect anomalies"
+            }
+
+    def _handle_analytics_performance(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
+        """Handle performance analytics requests."""
+        try:
+            # Extract time period from query
+            time_period = "24h"  # default
+            if parsed_query.time_range:
+                if "week" in parsed_query.original_query.lower():
+                    time_period = "7d"
+                elif "month" in parsed_query.original_query.lower():
+                    time_period = "30d"
+                elif "hour" in parsed_query.original_query.lower():
+                    time_period = "1h"
+            
+            # Get performance report from analytics service
+            performance = summary_service.get_performance_report(time_period)
+            
+            return {
+                "success": True,
+                "data": performance,
+                "query_type": "analytics_performance",
+                "message": f"Performance report for the last {time_period}",
+                "metadata": {
+                    "time_period": time_period,
+                    "query": parsed_query.original_query
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "query_type": "analytics_performance",
+                "message": "Failed to generate performance report"
+            }
+
+    def _handle_analytics_metrics(self, parsed_query: ParsedQuery, db_session: Session) -> Dict[str, Any]:
+        """Handle metrics analytics requests."""
+        try:
+            # Extract time period from query
+            time_period = "24h"  # default
+            if parsed_query.time_range:
+                if "week" in parsed_query.original_query.lower():
+                    time_period = "7d"
+                elif "month" in parsed_query.original_query.lower():
+                    time_period = "30d"
+                elif "hour" in parsed_query.original_query.lower():
+                    time_period = "1h"
+            
+            # Get detailed metrics from analytics service
+            metrics = summary_service.get_detailed_metrics(time_period)
+            
+            return {
+                "success": True,
+                "data": metrics,
+                "query_type": "analytics_metrics",
+                "message": f"Detailed metrics for the last {time_period}",
+                "metadata": {
+                    "time_period": time_period,
+                    "query": parsed_query.original_query
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "query_type": "analytics_metrics",
+                "message": "Failed to retrieve metrics"
+            }
+
     def _get_query_suggestions(self) -> List[str]:
         """Get query suggestions for unsupported intents."""
         return [
@@ -1250,7 +1406,11 @@ class QueryTranslator:
             "What assets did IP address 192.168.1.100 target?",
             "Show critical alerts from today",
             "Find all ERROR logs from container webapp",
-            "Investigate suspicious activity in the last 24 hours"
+            "Investigate suspicious activity in the last 24 hours",
+            "Give me a system summary for the last 24 hours",
+            "Show me performance metrics for this week",
+            "Detect anomalies in the last hour",
+            "What are the critical anomalies today?"
         ]
 
 
