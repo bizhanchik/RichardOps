@@ -527,6 +527,11 @@ def get_nlp_parser() -> NLPQueryParser:
         _nlp_parser = NLPQueryParser()
     return _nlp_parser
 
+def reset_nlp_parser():
+    """Reset the global NLP parser instance to pick up updated classifiers."""
+    global _nlp_parser
+    _nlp_parser = None
+
 def parse_natural_query(query: str) -> ParsedQuery:
     """
     Parse a natural language query into structured components.

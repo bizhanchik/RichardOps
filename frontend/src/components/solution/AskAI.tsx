@@ -135,7 +135,8 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
 
     try {
       // Call the NLP API
-      const response = await fetch('/api/nlp/query', {
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiBaseUrl}/api/nlp/query`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

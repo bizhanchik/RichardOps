@@ -77,6 +77,12 @@ class ImprovedIntentClassifier:
             IntentExample("what do the logs say", QueryIntent.SEARCH_LOGS),
             IntentExample("check the log files", QueryIntent.SEARCH_LOGS),
             IntentExample("show me what's in the logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("show recent error logs and stack traces", QueryIntent.SEARCH_LOGS),
+            IntentExample("display error logs and stack traces", QueryIntent.SEARCH_LOGS),
+            IntentExample("get stack traces from logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("show me stack traces", QueryIntent.SEARCH_LOGS),
+            IntentExample("find stack traces in logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("display recent stack traces", QueryIntent.SEARCH_LOGS),
             
             # GENERATE_REPORT examples - Enhanced
             IntentExample("generate a security report", QueryIntent.GENERATE_REPORT),
@@ -410,6 +416,11 @@ def get_improved_classifier() -> ImprovedIntentClassifier:
     if _improved_classifier is None:
         _improved_classifier = ImprovedIntentClassifier()
     return _improved_classifier
+
+def reset_improved_classifier():
+    """Reset the global classifier instance to pick up new training examples."""
+    global _improved_classifier
+    _improved_classifier = None
 
 
 def classify_query_intent(query: str) -> Tuple[QueryIntent, float]:
