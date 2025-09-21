@@ -14,7 +14,7 @@ const Hero: React.FC = () => {
         
         {/* Subtitle */}
         <p className="text-xl md:text-2xl text-gray-600 mb-6 max-w-3xl mx-auto">
-          We're building an AI-powered DevSecOps Assistant that revolutionizes security monitoring 
+          We're building an AI-powered assistant that revolutionizes security monitoring 
           and automated response for modern development teams.
         </p>
 

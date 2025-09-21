@@ -1,8 +1,20 @@
-import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle, useContext } from 'react';
-import { Search, RefreshCw, Terminal, X, Filter, Download, Eye, Settings } from 'lucide-react';
+import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
+import { RefreshCw, Terminal, Filter, Download } from 'lucide-react';
 import { logsDataService, LogsDataService, type LogEntry } from '../../utils/logsDataService';
 import LogFilterPanel from '../shared/LogFilterPanel';
-import { ToastContext } from '../../contexts/ToastContext';
+import { useToast } from '../../contexts/ToastContext';
+
+interface LogFilter {
+  timeRange: {
+    start: string;
+    end: string;
+    preset?: 'last-hour' | 'last-4-hours' | 'last-24-hours' | 'last-7-days' | 'custom';
+  };
+  levels: string[];
+  containers: string[];
+  searchTerm: string;
+  severity?: string[];
+}
 
 interface LogsProps {
   searchQuery: string;
@@ -20,10 +32,7 @@ interface LogsRef {
 const Logs = forwardRef<LogsRef, LogsProps>(({ 
   searchQuery, 
   logCount, 
-  viewMode, 
-  setSearchQuery, 
-  setLogCount, 
-  setViewMode 
+  viewMode
 }, ref) => {
   // State management
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -31,16 +40,16 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [showFilters, setShowFilters] = useState(false);
-  const [filters, setFilters] = useState({
-    timeRange: { start: '', end: '' },
-    levels: [] as string[],
-    containers: [] as string[],
-    hosts: [] as string[],
-    environments: [] as string[]
+  const [filters, setFilters] = useState<LogFilter>({
+    timeRange: { start: '', end: '', preset: 'last-24-hours' },
+    levels: [],
+    containers: [],
+    searchTerm: '',
+    severity: []
   });
   
   // Toast context
-  const { showToast } = useContext(ToastContext);
+  const { showSuccess, showError, showWarning } = useToast();
 
   // Refs
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -51,7 +60,7 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
   };
 
   // Fetch logs based on view mode
-  const fetchLogs = async (shouldScroll: boolean = false) => {
+  const fetchLogs = async () => {
     setIsLoading(true);
     setError(null);
 
@@ -74,6 +83,9 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
         searchParams.start_time = filters.timeRange.start;
         searchParams.end_time = filters.timeRange.end;
       }
+      if (filters.searchTerm.trim()) {
+        searchParams.query = filters.searchTerm;
+      }
       
       if (viewMode === 'search' && searchQuery.trim()) {
         searchParams.query = searchQuery;
@@ -90,9 +102,7 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
 
       if (response.fallback) {
         setError('Using fallback data - some logs may be missing');
-        showToast('warning', 'Using cached data', 'Some logs may be missing due to connection issues');
-      } else {
-        showToast('success', 'Logs loaded', `Successfully loaded ${response.documents?.length || 0} log entries`);
+        showWarning('Using cached data', 'Some logs may be missing due to connection issues');
       }
 
       // Reverse the logs to show newest at bottom
@@ -105,7 +115,7 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch logs';
       setError(errorMessage);
-      showToast('error', 'Failed to load logs', errorMessage);
+      showError('Failed to load logs', errorMessage);
       console.error('Error fetching logs:', err);
     } finally {
       setIsLoading(false);
@@ -114,7 +124,7 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
 
   // Expose fetchLogs function to parent component
   useImperativeHandle(ref, () => ({
-    fetchLogs: () => fetchLogs(true) // Always scroll to bottom when refreshing
+    fetchLogs: () => fetchLogs() // Always scroll to bottom when refreshing
   }));
 
   // Export logs functionality
@@ -157,30 +167,21 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      showToast('success', 'Export completed', `Logs exported as ${filename}`);
+      showSuccess('Export completed', `Logs exported as ${filename}`);
     } catch (err) {
-      showToast('error', 'Export failed', 'Failed to export logs');
+      showError('Export failed', 'Failed to export logs');
       console.error('Export error:', err);
     }
   };
 
   // Filter handlers
-  const handleFilterChange = (newFilters: typeof filters) => {
+  const handleFilterChange = (newFilters: LogFilter) => {
     setFilters(newFilters);
     // Refetch logs with new filters
     fetchLogs();
   };
 
-  const clearFilters = () => {
-    setFilters({
-      timeRange: { start: '', end: '' },
-      levels: [],
-      containers: [],
-      hosts: [],
-      environments: []
-    });
-    fetchLogs();
-  };
+
 
   // Initial data fetch and when view mode changes
   useEffect(() => {
@@ -223,70 +224,17 @@ const Logs = forwardRef<LogsRef, LogsProps>(({
               )}
             </div>
             
-            {/* Action Controls */}
-            <div className="flex items-center space-x-1 sm:space-x-2 flex-shrink-0">
-              <button
-                onClick={() => setShowFilters(!showFilters)}
-                className={`inline-flex items-center px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors ${
-                  showFilters 
-                    ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' 
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-                title="Toggle filters"
-              >
-                <Filter className="w-4 h-4 mr-1" />
-                <span className="hidden sm:inline">Filters</span>
-                <span className="sm:hidden">F</span>
-                {(filters.levels.length > 0 || filters.containers.length > 0 || filters.timeRange.start) && (
-                  <span className="ml-1 px-1.5 py-0.5 bg-blue-500 text-white text-xs rounded-full">
-                    {filters.levels.length + filters.containers.length + (filters.timeRange.start ? 1 : 0)}
-                  </span>
-                )}
-              </button>
-              
-              <div className="relative group">
-                <button className="inline-flex items-center px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
-                  <Download className="w-4 h-4 mr-1" />
-                  <span className="hidden sm:inline">Export</span>
-                  <span className="sm:hidden">E</span>
-                </button>
-                <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-gray-200 rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
-                  <button
-                    onClick={() => exportLogs('csv')}
-                    className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-                  >
-                    Export CSV
-                  </button>
-                  <button
-                    onClick={() => exportLogs('json')}
-                    className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-                  >
-                    Export JSON
-                  </button>
-                </div>
-              </div>
-              
-              <button
-                onClick={() => fetchLogs(true)}
-                disabled={isLoading}
-                className="inline-flex items-center px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed rounded-md transition-colors"
-                title="Refresh logs"
-              >
-                <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-              </button>
-            </div>
+
           </div>
           
           {/* Filter Panel */}
           {showFilters && (
             <div className="border-b border-gray-300 bg-gray-50">
               <LogFilterPanel
-                filters={filters}
-                onFiltersChange={handleFilterChange}
-                onClearFilters={clearFilters}
-                availableContainers={Array.from(new Set(logs.map(log => log.container).filter(Boolean)))}
-                availableHosts={Array.from(new Set(logs.map(log => log.host).filter(Boolean)))}
-                availableEnvironments={Array.from(new Set(logs.map(log => log.environment).filter(Boolean)))}
+                onFilterChange={handleFilterChange}
+                onRefresh={() => fetchLogs()}
+                availableContainers={Array.from(new Set(logs.map(log => log.container).filter((container): container is string => Boolean(container))))}
+                isLoading={isLoading}
               />
             </div>
           )}

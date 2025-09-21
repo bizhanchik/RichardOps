@@ -1,9 +1,9 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BarChart3, TrendingUp, AlertTriangle, Activity, RefreshCw, Eye, Download } from 'lucide-react';
 import AnomalyCard from '../shared/AnomalyCard';
 import StatusCard from '../shared/StatusCard';
 import DataFallback from '../shared/DataFallback';
-import { ToastContext } from '../../contexts/ToastContext';
+import { useToast } from '../../contexts/ToastContext';
 
 interface AnalyticsProps {
   // Add any props if needed in the future
@@ -20,8 +20,13 @@ interface AnalyticsData {
 const Analytics: React.FC<AnalyticsProps> = () => {
   const [data, setData] = useState<AnalyticsData>({ loading: false });
   const [activeTab, setActiveTab] = useState<'summary' | 'performance' | 'anomalies'>('summary');
-  const [retryCount, setRetryCount] = useState(0);
-  const { showToast } = useContext(ToastContext);
+  const [, setRetryCount] = useState(0);
+  const { showError, showInfo } = useToast();
+
+  // Auto-refresh when component mounts
+  useEffect(() => {
+    handleFetchAll();
+  }, []);
 
   const fetchAnalytics = async (endpoint: string, period: string = '24h') => {
     try {
@@ -45,11 +50,10 @@ const Analytics: React.FC<AnalyticsProps> = () => {
     try {
       const summary = await fetchAnalytics('summary');
       setData(prev => ({ ...prev, summary, loading: false }));
-      showToast('Summary data loaded successfully', 'success');
       setRetryCount(0);
     } catch (error) {
       setData(prev => ({ ...prev, error: `Failed to fetch summary: ${error}`, loading: false }));
-      showToast('Failed to load summary data', 'error');
+      showError('Error', 'Failed to load summary data');
     }
   };
 
@@ -57,11 +61,10 @@ const Analytics: React.FC<AnalyticsProps> = () => {
     try {
       const performanceReport = await fetchAnalytics('performance-report');
       setData(prev => ({ ...prev, performanceReport, loading: false }));
-      showToast('Performance report loaded successfully', 'success');
       setRetryCount(0);
     } catch (error) {
       setData(prev => ({ ...prev, error: `Failed to fetch performance report: ${error}`, loading: false }));
-      showToast('Failed to load performance report', 'error');
+      showError('Error', 'Failed to load performance report');
     }
   };
 
@@ -69,11 +72,10 @@ const Analytics: React.FC<AnalyticsProps> = () => {
     try {
       const anomalies = await fetchAnalytics('anomalies', '6');
       setData(prev => ({ ...prev, anomalies, loading: false }));
-      showToast(`Loaded ${anomalies.length} anomalies`, 'success');
       setRetryCount(0);
     } catch (error) {
       setData(prev => ({ ...prev, error: `Failed to fetch anomalies: ${error}`, loading: false }));
-      showToast('Failed to load anomaly data', 'error');
+      showError('Error', 'Failed to load anomaly data');
     }
   };
 
@@ -94,39 +96,20 @@ const Analytics: React.FC<AnalyticsProps> = () => {
         loading: false
       });
       
-      showToast('All analytics data loaded successfully', 'success');
       setRetryCount(0);
     } catch (error) {
       setData(prev => ({ ...prev, error: `Failed to fetch analytics data: ${error}`, loading: false }));
-      showToast('Failed to load analytics data', 'error');
       setRetryCount(prev => prev + 1);
     }
-  };
-
-  const handleRetry = () => {
-    setData(prev => ({ ...prev, error: undefined }));
-    handleFetchAll();
-  };
-
-  const handleInvestigateAnomaly = (anomaly: any) => {
-    showToast(`Investigating ${anomaly.type} anomaly`, 'info');
-    // TODO: Implement investigation logic
-  };
-
-  const handleAcknowledgeAnomaly = (anomaly: any) => {
-    showToast(`Acknowledged ${anomaly.type} anomaly`, 'success');
-    // TODO: Implement acknowledgment logic
   };
 
   const renderSummary = () => {
     if (!data.summary) {
       return (
         <DataFallback
-          type="no-data"
+          type="data"
           title="No Summary Data"
           description="Click 'Fetch Summary' to load system metrics and overview"
-          onRetry={handleFetchSummary}
-          retryText="Fetch Summary"
         />
       );
     }
@@ -138,22 +121,23 @@ const Analytics: React.FC<AnalyticsProps> = () => {
           {/* System Metrics Cards */}
           {data.summary.metrics && Object.entries(data.summary.metrics).map(([key, value]) => {
             // Handle new data structure with avg, min, max, count, status
-            let displayValue, status, subtitle;
+            let displayValue: string | number, status: 'healthy' | 'warning' | 'critical' | 'unknown', subtitle: string | undefined;
             
             if (typeof value === 'object' && value !== null) {
               // New structure with statistics
-              if (value.status === 'no_data' || value.avg === null) {
+              const valueObj = value as any;
+              if (valueObj.status === 'no_data' || valueObj.avg === null) {
                 displayValue = 'N/A';
                 status = 'warning';
-                subtitle = `No data available (${value.count || 0} records)`;
+                subtitle = `No data available (${valueObj.count || 0} records)`;
               } else {
-                const numericValue = value.avg || 0;
+                const numericValue = valueObj.avg || 0;
                 const isPercentage = key.includes('usage') || key.includes('percent');
                 displayValue = isPercentage ? Math.round(numericValue) : numericValue;
                 status = isPercentage 
                   ? (numericValue > 80 ? 'critical' : numericValue > 60 ? 'warning' : 'healthy')
                   : 'healthy';
-                subtitle = `Min: ${value.min}, Max: ${value.max} (${value.count} records)`;
+                subtitle = `Min: ${valueObj.min}, Max: ${valueObj.max} (${valueObj.count} records)`;
               }
             } else {
               // Legacy structure - single numeric value
@@ -267,11 +251,9 @@ const Analytics: React.FC<AnalyticsProps> = () => {
     if (!data.performanceReport) {
       return (
         <DataFallback
-          type="no-data"
+          type="data"
           title="No Performance Data"
           description="Click 'Fetch Performance' to load system performance metrics and analysis"
-          onRetry={handleFetchPerformance}
-          retryText="Fetch Performance"
         />
       );
     }
@@ -320,10 +302,6 @@ const Analytics: React.FC<AnalyticsProps> = () => {
               <TrendingUp className="w-5 h-5 mr-2 text-blue-500" />
               Performance Analysis
             </h4>
-            <button className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md transition-colors">
-              <Download className="w-4 h-4 mr-1" />
-              Export Report
-            </button>
           </div>
         
         {/* Data Quality Section */}
@@ -433,11 +411,9 @@ const Analytics: React.FC<AnalyticsProps> = () => {
     if (!data.anomalies) {
       return (
         <DataFallback
-          type="no-data"
+          type="data"
           title="No Anomaly Data"
           description="Click 'Fetch Anomalies' to load recent anomaly detection results"
-          onRetry={handleFetchAnomalies}
-          retryText="Fetch Anomalies"
         />
       );
     }
@@ -497,29 +473,17 @@ const Analytics: React.FC<AnalyticsProps> = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-medium text-gray-900">Detected Anomalies</h3>
-            <div className="flex items-center space-x-2">
-              <button className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors">
-                <Eye className="w-4 h-4 mr-1" />
-                View All
-              </button>
-              <button className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md transition-colors">
-                <Download className="w-4 h-4 mr-1" />
-                Export
-              </button>
-            </div>
           </div>
           
           {data.anomalies
-            .sort((a, b) => {
-              const severityOrder = { 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1 };
+            .sort((a: any, b: any) => {
+              const severityOrder: { [key: string]: number } = { 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1 };
               return severityOrder[b.severity] - severityOrder[a.severity];
             })
             .map((anomaly, index) => (
               <AnomalyCard
                 key={index}
                 anomaly={anomaly}
-                onInvestigate={handleInvestigateAnomaly}
-                onAcknowledge={handleAcknowledgeAnomaly}
               />
             ))}
         </div>
@@ -537,7 +501,7 @@ const Analytics: React.FC<AnalyticsProps> = () => {
         <div className="flex items-center space-x-3">
           <div className="flex items-center space-x-2">
             <div className={`w-2 h-2 rounded-full ${data.loading ? 'bg-yellow-400 animate-pulse' : 'bg-green-400'}`}></div>
-            <span className="text-xs text-gray-500">{data.loading ? 'Updating...' : 'Live'}</span>
+            <span className="text-xs text-gray-500">{data.loading ? 'Updating...' : ''}</span>
           </div>
           <button
             onClick={handleFetchAll}
@@ -552,12 +516,10 @@ const Analytics: React.FC<AnalyticsProps> = () => {
 
       {data.error && (
         <DataFallback
-          type="error"
+          type="server"
           title="Failed to Load Analytics"
           description={data.error}
-          onRetry={handleRetry}
-          retryText="Try Again"
-          showCachedData={Object.keys(data).some(key => data[key] && data[key].length > 0)}
+          showCachedOption={Object.keys(data).some(key => (data as any)[key] && (data as any)[key].length > 0)}
         />
       )}
 

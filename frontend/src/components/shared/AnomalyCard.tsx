@@ -130,7 +130,6 @@ const AnomalyCard: React.FC<AnomalyCardProps> = ({
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center space-x-2 mb-1">
-                {getTypeIcon()}
                 <h3 className="font-semibold text-gray-900 truncate">
                   {anomaly.type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
@@ -159,24 +158,6 @@ const AnomalyCard: React.FC<AnomalyCardProps> = ({
           
           {/* Actions */}
           <div className="flex items-center space-x-2 ml-4">
-            {!isAcknowledged && (
-              <>
-                <button
-                  onClick={handleInvestigate}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <Eye className="w-3 h-3 mr-1" />
-                  Investigate
-                </button>
-                <button
-                  onClick={handleAcknowledge}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-green-700 bg-green-100 hover:bg-green-200 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-green-500"
-                >
-                  <Check className="w-3 h-3 mr-1" />
-                  Acknowledge
-                </button>
-              </>
-            )}
             <button
               onClick={() => setIsExpanded(!isExpanded)}
               className="p-1.5 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100 transition-colors"

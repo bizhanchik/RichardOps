@@ -20,7 +20,7 @@ interface ToastNotificationProps {
 }
 
 const ToastNotification: React.FC<ToastNotificationProps> = ({ toast, onDismiss }) => {
-  const [isVisible, setIsVisible] = useState(true);
+  const [isVisible] = useState(true);
   const [isExiting, setIsExiting] = useState(false);
 
   useEffect(() => {
