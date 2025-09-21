@@ -146,13 +146,42 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
       }
 
       const result = await response.json();
+      console.log('Backend response:', result); // Debug log
+      
+      // Handle the new direct mapping system response format
+      let queryResult: QueryResult;
+      let formattedContent: string;
+      
+      if (result.success && result.data) {
+        // New direct mapping system response structure
+        queryResult = {
+          success: result.success,
+          intent: result.data.function_used || 'unknown',
+          confidence: result.data.metadata?.confidence || 1.0,
+          results: result.data.results || [],
+          count: result.data.count || result.data.results?.length || 0,
+          processing_time_ms: result.processing_time_ms || result.data.processing_time_ms || 0,
+          metadata: result.data.metadata,
+          query_info: {
+            query_type: result.data.function_used || 'unknown',
+            method_called: result.data.function_used,
+            parameters: result.data.parameters || {}
+          }
+        };
+        
+        formattedContent = formatAIResponseForDirectMapping(result.data, currentInput);
+      } else {
+        // Fallback for other response formats
+        queryResult = result.result || result;
+        formattedContent = formatAIResponse(result);
+      }
       
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'ai',
-        content: formatAIResponse(result),
+        content: formattedContent,
         timestamp: new Date(),
-        queryResult: result.result || result,
+        queryResult: queryResult,
       };
 
       setMessages(prev => [...prev, aiMessage]);
@@ -818,6 +847,66 @@ Current system metrics and key performance indicators. Values are updated in rea
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Helper function to format AI response for the new direct mapping system
+  const formatAIResponseForDirectMapping = (data: any, userQuery: string): string => {
+    const functionUsed = data.function_used || 'unknown';
+    const count = data.count || data.results?.length || 0;
+    const totalCount = data.total_count || count;
+    const hasMore = data.has_more || false;
+    
+    // Format response based on the function that was called
+    switch (functionUsed) {
+      case 'fetch_latest_logs':
+        if (count > 0) {
+          return `🔍 Found ${count} recent log entries${totalCount > count ? ` (showing ${count} of ${totalCount} total)` : ''}. Here are the latest logs:`;
+        } else {
+          return '🔍 No recent log entries found. The system may not have generated any logs recently.';
+        }
+        
+      case 'search_logs':
+        if (count > 0) {
+          return `🔍 Found ${count} log entries matching your search${totalCount > count ? ` (showing ${count} of ${totalCount} total)` : ''}. Here are the results:`;
+        } else {
+          return '🔍 No log entries found matching your search criteria. Try adjusting your search terms.';
+        }
+        
+      case 'get_alerts':
+        if (count > 0) {
+          return `🚨 Found ${count} active alerts${hasMore ? ' (showing recent alerts)' : ''}. Here are the current system alerts:`;
+        } else {
+          return '✅ No active alerts found. Your system is running smoothly!';
+        }
+        
+      case 'get_metrics':
+        if (count > 0) {
+          return `📊 Retrieved ${count} performance metrics. Here's your system performance overview:`;
+        } else {
+          return '📊 No performance metrics available at the moment.';
+        }
+        
+      case 'get_docker_events':
+        if (count > 0) {
+          return `🐳 Found ${count} Docker events${hasMore ? ' (showing recent events)' : ''}. Here are the container activities:`;
+        } else {
+          return '🐳 No recent Docker events found. Container activity is quiet.';
+        }
+        
+      case 'get_container_status':
+        if (count > 0) {
+          return `🐳 Retrieved status for ${count} containers. Here's your container overview:`;
+        } else {
+          return '🐳 No container information available.';
+        }
+        
+      default:
+        if (count > 0) {
+          return `✅ Successfully processed your query "${userQuery}". Found ${count} results:`;
+        } else {
+          return `✅ Processed your query "${userQuery}" but no results were found.`;
+        }
     }
   };
 

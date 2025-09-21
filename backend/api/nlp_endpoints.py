@@ -224,7 +224,7 @@ async def test_nlp_system(request: TestRequest) -> TestResponse:
         TestResponse with test results
     """
     try:
-        nlp_system = get_nlp_system()
+        nlp_system = get_simple_nlp_system()
         
         # Define test queries
         basic_queries = [
@@ -258,11 +258,11 @@ async def test_nlp_system(request: TestRequest) -> TestResponse:
                 
                 test_results.append({
                     "query": query,
-                    "success": True,
+                    "success": result.get("status") != "error",
                     "processing_time_ms": round(processing_time, 2),
-                    "intent": result.get("metadata", {}).get("intent", "unknown"),
-                    "confidence": result.get("metadata", {}).get("confidence", 0.0),
-                    "results_count": len(result.get("results", []))
+                    "function_used": result.get("function_used", "unknown"),
+                    "results_count": result.get("count", 0),
+                    "error": result.get("error") if result.get("status") == "error" else None
                 })
                 
             except Exception as e:
@@ -295,7 +295,7 @@ async def health_check() -> HealthResponse:
         HealthResponse with health status and checks
     """
     try:
-        nlp_system = get_nlp_system()
+        nlp_system = get_simple_nlp_system()
         
         # Perform health checks
         checks = {}
@@ -323,7 +323,7 @@ async def health_check() -> HealthResponse:
         
         # Test suggestions
         try:
-            suggestions = nlp_system.get_query_suggestions()
+            suggestions = nlp_system._get_query_suggestions()
             if suggestions:
                 checks["suggestions"] = "healthy"
             else:
