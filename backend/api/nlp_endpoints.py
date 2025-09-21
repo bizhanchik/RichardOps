@@ -12,6 +12,8 @@ from typing import Dict, Any, Optional, List
 import time
 
 from services.nlp_query_system import get_nlp_system
+from services.improved_intent_classifier import reset_improved_classifier
+from services.nlp_query_parser import reset_nlp_parser
 
 
 # Create FastAPI router for NLP endpoints
@@ -342,4 +344,41 @@ async def health_check() -> HealthResponse:
             health="unhealthy",
             error=str(e),
             timestamp=time.time()
+        )
+
+
+class ResetResponse(BaseModel):
+    """Response model for cache reset."""
+    success: bool
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+
+@nlp_router.post("/reset", response_model=ResetResponse)
+async def reset_nlp_cache() -> ResetResponse:
+    """
+    Reset the NLP system cache to pick up new training examples.
+    
+    This endpoint clears all cached classifier instances, forcing them
+    to reload with the latest training data.
+    
+    Returns:
+        ResetResponse indicating success or failure
+    """
+    try:
+        # Reset the improved intent classifier cache
+        reset_improved_classifier()
+        
+        # Reset the NLP parser cache
+        reset_nlp_parser()
+        
+        return ResetResponse(
+            success=True,
+            message="NLP cache reset successfully. New training examples will be loaded on next query."
+        )
+        
+    except Exception as e:
+        return ResetResponse(
+            success=False,
+            error=f"Failed to reset NLP cache: {str(e)}"
         )
