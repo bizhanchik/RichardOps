@@ -220,79 +220,180 @@ class NLPQueryParser:
         )
     
     def _classify_intent(self, query: str) -> Tuple[QueryIntent, float]:
-        """Classify the intent of the query with improved domain-aware logic."""
+        """Classify the intent of a query with improved fallback logic."""
+        query_lower = query.lower()
+        
         # Try improved classifier first if available
         if self.use_improved_classifier and self.improved_classifier:
             try:
                 intent, confidence = self.improved_classifier.classify_intent(query)
-                # If improved classifier gives a confident result, use it
-                if confidence > 0.3:
-                    return intent, confidence
+                
+                # If confidence is very low, try keyword-based fallback
+                if confidence < 0.3:
+                    keyword_intent, keyword_confidence = self._classify_with_keywords(query_lower)
+                    
+                    # Use keyword result if it has higher confidence
+                    if keyword_confidence > confidence:
+                        return keyword_intent, keyword_confidence
+                    
+                    # If both are low confidence, provide helpful suggestions
+                    if confidence < 0.2 and keyword_confidence < 0.2:
+                        return QueryIntent.UNKNOWN, 0.1  # Very low confidence
+                
+                return intent, confidence
+                
             except Exception as e:
-                print(f"Warning: Improved classifier failed: {e}")
+                print(f"Error in improved classifier: {e}")
+                # Fall back to keyword-based classification
+                return self._classify_with_keywords(query_lower)
         
-        # Fallback to keyword-based classification
-        query_lower = query.lower()
+        # Use keyword-based classification as fallback
+        return self._classify_with_keywords(query_lower)
+    
+    def _classify_with_keywords(self, query_lower: str) -> Tuple[QueryIntent, float]:
+        """Classify intent using keyword-based approach with improved scoring."""
         intent_scores = {}
         
-        # Calculate keyword-based scores
-        for intent, keywords in self.intent_patterns.items():
+        # Calculate scores for each intent based on keyword matches
+        for intent, patterns in self.intent_patterns.items():
             score = 0
-            for keyword in keywords:
-                if keyword in query_lower:
-                    score += 1
+            matched_keywords = 0
             
-            # Normalize score
-            if keywords:
-                intent_scores[intent] = score / len(keywords)
+            for pattern in patterns:
+                if pattern in query_lower:
+                    # Weight longer patterns more heavily
+                    pattern_weight = len(pattern.split()) * 0.3 + 0.7
+                    score += pattern_weight
+                    matched_keywords += 1
+            
+            # Normalize score by number of patterns and add bonus for multiple matches
+            if matched_keywords > 0:
+                normalized_score = score / len(patterns)
+                # Bonus for multiple keyword matches
+                if matched_keywords > 1:
+                    normalized_score *= (1 + (matched_keywords - 1) * 0.2)
+                intent_scores[intent] = min(normalized_score, 1.0)
         
-        # Check if query contains security/monitoring domain terms
-        domain_terms = [
-            "log", "logs", "error", "errors", "alert", "alerts", "warning", "warnings",
-            "container", "docker", "server", "system", "security", "monitoring",
-            "event", "events", "incident", "incidents", "metric", "metrics",
-            "status", "health", "performance", "cpu", "memory", "disk", "network",
-            "database", "api", "service", "application", "backend", "frontend"
-        ]
+        # Special handling for domain-specific terms
+        domain_boost = self._get_domain_context_boost(query_lower)
+        for intent, boost in domain_boost.items():
+            if intent in intent_scores:
+                intent_scores[intent] = min(intent_scores[intent] + boost, 1.0)
         
-        has_domain_context = any(term in query_lower for term in domain_terms)
-        
-        # Special handling for log queries with time patterns
-        log_time_patterns = [
-            "logs from", "logs in", "logs for", "logs during", "logs over",
-            "show logs", "get logs", "fetch logs", "display logs", "find logs"
-        ]
-        
-        if any(pattern in query_lower for pattern in log_time_patterns) or (
-            "logs" in query_lower and any(time_word in query_lower for time_word in ["hour", "day", "week", "month", "yesterday", "today", "last", "past"])
-        ):
-            return QueryIntent.SEARCH_LOGS, 0.9
-        
-        # If no domain context and no strong keyword matches, return unknown
-        if not has_domain_context and (not intent_scores or max(intent_scores.values()) < 0.1):
+        if not intent_scores:
             return QueryIntent.UNKNOWN, 0.0
         
-        # Apply improved heuristics with domain awareness
-        if has_domain_context:
-            if "report" in query_lower or "summary" in query_lower:
-                return QueryIntent.GENERATE_REPORT, max(intent_scores.get(QueryIntent.GENERATE_REPORT, 0), 0.8)
-            elif "alert" in query_lower or "critical" in query_lower or "urgent" in query_lower:
-                return QueryIntent.SHOW_ALERTS, max(intent_scores.get(QueryIntent.SHOW_ALERTS, 0), 0.8)
-            elif ("investigate" in query_lower or 
-                  (query_lower.startswith(("what", "who", "where", "when", "how", "why")) and has_domain_context)):
-                return QueryIntent.INVESTIGATE, max(intent_scores.get(QueryIntent.INVESTIGATE, 0), 0.8)
+        # Get the best intent
+        best_intent = max(intent_scores, key=intent_scores.get)
+        confidence = intent_scores[best_intent]
         
-        # Return best intent only if confidence is above threshold
-        if intent_scores:
-            best_intent = max(intent_scores, key=intent_scores.get)
-            confidence = intent_scores[best_intent]
-            
-            # Minimum confidence threshold
-            if confidence >= 0.05:  # At least 5% keyword match
-                return best_intent, confidence
-        
-        return QueryIntent.UNKNOWN, 0.0
+        # Apply improved confidence thresholds
+        if confidence < 0.15:
+            return QueryIntent.UNKNOWN, confidence
+        elif confidence < 0.3:
+            # Low confidence - suggest alternatives
+            return best_intent, confidence * 0.8
+        else:
+            return best_intent, min(confidence, 0.9)
     
+    def _get_domain_context_boost(self, query_lower: str) -> Dict[QueryIntent, float]:
+        """Provide domain-specific context boosts for better classification."""
+        boosts = {}
+        
+        # Technical terms that strongly indicate specific intents
+        technical_indicators = {
+            # Log-related terms
+            'log': QueryIntent.SEARCH_LOGS,
+            'logs': QueryIntent.SEARCH_LOGS,
+            'logging': QueryIntent.SEARCH_LOGS,
+            'stdout': QueryIntent.SEARCH_LOGS,
+            'stderr': QueryIntent.SEARCH_LOGS,
+            'syslog': QueryIntent.SEARCH_LOGS,
+            'journal': QueryIntent.SEARCH_LOGS,
+            
+            # Alert-related terms
+            'alert': QueryIntent.SHOW_ALERTS,
+            'alerts': QueryIntent.SHOW_ALERTS,
+            'alarm': QueryIntent.SHOW_ALERTS,
+            'alarms': QueryIntent.SHOW_ALERTS,
+            'notification': QueryIntent.SHOW_ALERTS,
+            'incident': QueryIntent.SHOW_ALERTS,
+            'warning': QueryIntent.SHOW_ALERTS,
+            'critical': QueryIntent.SHOW_ALERTS,
+            
+            # Investigation terms
+            'debug': QueryIntent.INVESTIGATE,
+            'troubleshoot': QueryIntent.INVESTIGATE,
+            'diagnose': QueryIntent.INVESTIGATE,
+            'root cause': QueryIntent.INVESTIGATE,
+            'why': QueryIntent.INVESTIGATE,
+            'what happened': QueryIntent.INVESTIGATE,
+            'what caused': QueryIntent.INVESTIGATE,
+            
+            # Performance terms
+            'performance': QueryIntent.ANALYTICS_PERFORMANCE,
+            'cpu': QueryIntent.ANALYTICS_PERFORMANCE,
+            'memory': QueryIntent.ANALYTICS_PERFORMANCE,
+            'disk': QueryIntent.ANALYTICS_PERFORMANCE,
+            'network': QueryIntent.ANALYTICS_PERFORMANCE,
+            'latency': QueryIntent.ANALYTICS_PERFORMANCE,
+            'throughput': QueryIntent.ANALYTICS_PERFORMANCE,
+            'response time': QueryIntent.ANALYTICS_PERFORMANCE,
+            
+            # Metrics terms
+            'metrics': QueryIntent.ANALYTICS_METRICS,
+            'metric': QueryIntent.ANALYTICS_METRICS,
+            'kpi': QueryIntent.ANALYTICS_METRICS,
+            'measurement': QueryIntent.ANALYTICS_METRICS,
+            'statistics': QueryIntent.ANALYTICS_METRICS,
+            
+            # Anomaly terms
+            'anomaly': QueryIntent.ANALYTICS_ANOMALIES,
+            'anomalies': QueryIntent.ANALYTICS_ANOMALIES,
+            'unusual': QueryIntent.ANALYTICS_ANOMALIES,
+            'suspicious': QueryIntent.ANALYTICS_ANOMALIES,
+            'outlier': QueryIntent.ANALYTICS_ANOMALIES,
+            'abnormal': QueryIntent.ANALYTICS_ANOMALIES,
+            
+            # Trend terms
+            'trend': QueryIntent.ANALYZE_TRENDS,
+            'trends': QueryIntent.ANALYZE_TRENDS,
+            'pattern': QueryIntent.ANALYZE_TRENDS,
+            'patterns': QueryIntent.ANALYZE_TRENDS,
+            'over time': QueryIntent.ANALYZE_TRENDS,
+            'historical': QueryIntent.ANALYZE_TRENDS,
+            'compare': QueryIntent.ANALYZE_TRENDS,
+            
+            # Report terms
+            'report': QueryIntent.GENERATE_REPORT,
+            'generate': QueryIntent.GENERATE_REPORT,
+            'create': QueryIntent.GENERATE_REPORT,
+            'export': QueryIntent.GENERATE_REPORT,
+            'compile': QueryIntent.GENERATE_REPORT,
+            
+            # Summary terms
+            'summary': QueryIntent.ANALYTICS_SUMMARY,
+            'overview': QueryIntent.ANALYTICS_SUMMARY,
+            'status': QueryIntent.ANALYTICS_SUMMARY,
+            'dashboard': QueryIntent.ANALYTICS_SUMMARY,
+        }
+        
+        for term, intent in technical_indicators.items():
+            if term in query_lower:
+                boosts[intent] = boosts.get(intent, 0) + 0.2
+        
+        # Question words that indicate investigation
+        question_words = ['why', 'what', 'how', 'when', 'where', 'who']
+        if any(word in query_lower for word in question_words):
+            boosts[QueryIntent.INVESTIGATE] = boosts.get(QueryIntent.INVESTIGATE, 0) + 0.15
+        
+        # Time-related terms that indicate trends
+        time_terms = ['yesterday', 'today', 'last week', 'last month', 'recent', 'latest', 'current']
+        if any(term in query_lower for term in time_terms):
+            boosts[QueryIntent.ANALYZE_TRENDS] = boosts.get(QueryIntent.ANALYZE_TRENDS, 0) + 0.1
+        
+        return boosts
+
     def _extract_entities(self, query: str) -> List[ExtractedEntity]:
         """Extract entities from the query using pattern matching."""
         entities = []

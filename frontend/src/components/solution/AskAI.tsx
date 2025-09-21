@@ -31,29 +31,28 @@ interface SystemHealth {
 
 interface QueryResult {
   success: boolean;
-  result?: {
-    results: any[];
-    count: number;
-    data_source?: string;
-    query_info?: {
-      query_type: string;
-      method_called?: string;
-      parameters?: Record<string, any>;
-    };
-    metadata?: {
-      intent: string;
-      confidence: number;
-      query_processed_at: string;
-      entities_found: number;
-      processing_time_ms: number;
-    };
-    anomalies?: AnomalyData[];
-    system_health?: SystemHealth;
-    insights?: string[];
-    recommendations?: string[];
-  };
+  intent: string;
+  confidence: number;
+  results?: any[];
+  count?: number;
   processing_time_ms?: number;
   error?: string;
+  metadata?: {
+    intent: string;
+    confidence: number;
+    query_processed_at: string;
+    entities_found: number;
+    processing_time_ms: number;
+  };
+  query_info?: {
+    query_type: string;
+    method_called?: string;
+    parameters?: Record<string, any>;
+  };
+  anomalies?: AnomalyData[];
+  system_health?: SystemHealth;
+  insights?: string[];
+  recommendations?: string[];
 }
 
 interface Message {
@@ -123,173 +122,399 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isLoading) return;
 
-    const userQuery = inputValue.trim();
-    const newMessage: Message = {
+    const userMessage: Message = {
       id: Date.now().toString(),
-      type: 'user',
-      content: userQuery,
-      timestamp: new Date()
+      content: inputValue.trim(),
+      sender: 'user',
+      timestamp: new Date(),
     };
 
-    setMessages(prev => [...prev, newMessage]);
+    setMessages(prev => [...prev, userMessage]);
     setInputValue('');
     setIsLoading(true);
 
     try {
-      // Call the backend NLP API
-      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-      const response = await fetch(`${apiBaseUrl}/api/nlp/query`, {
+      // Call the NLP API
+      const response = await fetch('/api/nlp/query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ query: userQuery }),
+        body: JSON.stringify({
+          query: userMessage.content,
+          include_context: true,
+          max_results: 50
+        }),
       });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const result = await response.json();
+      const result: QueryResult = await response.json();
       
-      // Enhanced AI response with analytics and insights
-      const aiResponse: Message = {
+      // Generate enhanced response based on intent and confidence
+      const enhancedResponse = generateEnhancedResponse(result, userMessage.content);
+      
+      const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
-        type: 'ai',
-        content: generateEnhancedResponse(result, userQuery),
+        content: enhancedResponse,
+        sender: 'ai',
         timestamp: new Date(),
         queryResult: result,
-        messageType: determineMessageType(result)
+        confidence: result.confidence,
+        intent: result.intent
       };
 
-      setMessages(prev => [...prev, aiResponse]);
-
-      // Add system insights if anomalies detected
-      if (result.result?.anomalies && result.result.anomalies.length > 0) {
-        setTimeout(() => {
-          const insightMessage: Message = {
-            id: (Date.now() + 2).toString(),
-            type: 'system',
-            content: generateAnomalyInsights(result.result.anomalies),
-            timestamp: new Date(),
-            messageType: 'insight'
-          };
-          setMessages(prev => [...prev, insightMessage]);
-        }, 1000);
+      setMessages(prev => [...prev, aiMessage]);
+      
+      // Show confidence warning for low confidence responses
+      if (result.confidence < 0.4) {
+        console.warn(`Low confidence response: ${result.confidence}`);
       }
 
     } catch (error) {
-      console.error('Error calling NLP API:', error);
+      console.error('Error sending message:', error);
       
-      const errorResponse: Message = {
+      // Provide helpful error message based on error type
+      let errorMessage = "I'm having trouble processing your request right now. ";
+      
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        errorMessage += "It seems there's a connection issue. Please check if the backend service is running.";
+      } else if (error instanceof Error && error.message.includes('HTTP error')) {
+        errorMessage += "The server returned an error. Please try again in a moment.";
+      } else {
+        errorMessage += "Please try rephrasing your question or try again later.";
+      }
+      
+      const errorAiMessage: Message = {
         id: (Date.now() + 1).toString(),
-        type: 'ai',
-        content: `🚨 I encountered an error while processing your query: ${error instanceof Error ? error.message : 'Unknown error'}. Please make sure the backend server is running.`,
+        content: errorMessage,
+        sender: 'ai',
         timestamp: new Date(),
-        messageType: 'normal'
+        isError: true
       };
 
-      setMessages(prev => [...prev, errorResponse]);
+      setMessages(prev => [...prev, errorAiMessage]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const generateEnhancedResponse = (result: QueryResult, query: string): string => {
-    if (!result.success || result.error) {
-      return `🚨 I encountered an error: ${result.error || 'Unknown error occurred'}`;
-    }
+  const generateEnhancedResponse = (result: QueryResult, userQuery: string): string => {
+    try {
+      // Handle low confidence responses with helpful suggestions
+      if (result.confidence < 0.3) {
+        const suggestions = [
+          "Try being more specific about what you're looking for",
+          "Include keywords like 'logs', 'alerts', 'performance', or 'metrics'",
+          "Ask questions like 'show me recent logs' or 'what alerts are active'",
+          "Use time-specific queries like 'logs from last hour' or 'today's errors'"
+        ];
+        
+        return `I'm not entirely sure what you're looking for (confidence: ${(result.confidence * 100).toFixed(1)}%). 
 
-    const totalResults = result.result?.count || 0;
-    const intent = result.result?.metadata?.intent || 'unknown';
+Here are some suggestions to help me understand better:
+${suggestions.map(s => `• ${s}`).join('\n')}
+
+You can also try one of the suggested queries below.`;
+      }
+
+      // Handle unknown intent with better guidance
+      if (result.intent === 'unknown') {
+        return `I didn't understand your request. Here are some things I can help you with:
+
+**📋 View Logs**: "show me recent logs", "get error logs", "display container logs"
+**🚨 Check Alerts**: "show current alerts", "any critical issues", "what's broken"
+**📊 Performance**: "system performance", "CPU usage", "memory metrics"
+**🔍 Investigate**: "what caused this error", "debug the issue", "why is it slow"
+**📈 Analytics**: "system summary", "detect anomalies", "show trends"
+**📄 Reports**: "generate report", "create summary", "export analytics"
+
+Try rephrasing your question using these examples as a guide.`;
+      }
+
+      // Enhanced responses based on intent and confidence
+      if (result.intent === 'search_logs') {
+        if (result.results && result.results.length > 0) {
+          const errorCount = result.results.filter(r => r.level === 'ERROR').length;
+          const warningCount = result.results.filter(r => r.level === 'WARN').length;
+          
+          let summary = `Found ${result.results.length} log entries`;
+          if (errorCount > 0 || warningCount > 0) {
+            summary += ` (${errorCount} errors, ${warningCount} warnings)`;
+          }
+          summary += `. Here are the most relevant entries:`;
+          
+          return summary;
+        } else {
+          return `No log entries found matching your criteria. Try:
+• Expanding the time range
+• Using different keywords
+• Checking if the service is running
+• Looking for logs in a different container`;
+        }
+      }
+
+      if (result.intent === 'show_alerts') {
+        if (result.results && result.results.length > 0) {
+          const criticalCount = result.results.filter(r => r.severity === 'critical').length;
+          const highCount = result.results.filter(r => r.severity === 'high').length;
+          
+          return `Found ${result.results.length} active alerts. ${criticalCount > 0 ? `⚠️ ${criticalCount} critical alerts require immediate attention!` : ''} ${highCount > 0 ? `🔶 ${highCount} high priority alerts.` : ''}`;
+        } else {
+          return `✅ No active alerts found. Your system appears to be running smoothly!`;
+        }
+      }
+
+      if (result.intent === 'investigate') {
+        return `🔍 Investigation Results:
+
+I've analyzed the available data to help understand the issue. The information below shows relevant logs, metrics, and patterns that might explain what happened.
+
+${result.confidence < 0.6 ? '💡 **Tip**: For more accurate investigations, try including specific error messages, timestamps, or component names in your query.' : ''}`;
+      }
+
+      if (result.intent === 'analytics_performance') {
+        return `📊 System Performance Analysis:
+
+Here's a comprehensive view of your system's current performance metrics and trends. Pay attention to any values that appear highlighted in red or yellow.`;
+      }
+
+      if (result.intent === 'analytics_anomalies') {
+        if (result.results && result.results.length > 0) {
+          return `🚨 Anomaly Detection Results:
+
+Found ${result.results.length} potential anomalies in your system. These patterns deviate from normal behavior and may require investigation.`;
+        } else {
+          return `✅ No significant anomalies detected. Your system metrics are within normal ranges.`;
+        }
+      }
+
+      if (result.intent === 'generate_report') {
+        return `📄 Report Generated:
+
+I've compiled a comprehensive report based on your request. The report includes relevant metrics, trends, and insights from the specified time period.`;
+      }
+
+      if (result.intent === 'analytics_summary') {
+        return `📋 System Summary:
+
+Here's a high-level overview of your system's current status, including key metrics, recent activity, and any items that need attention.`;
+      }
+
+      if (result.intent === 'analyze_trends') {
+        return `📈 Trend Analysis:
+
+I've analyzed historical data to identify patterns and trends. Look for any significant changes or unusual patterns in the visualizations below.`;
+      }
+
+      if (result.intent === 'analytics_metrics') {
+        return `📊 System Metrics:
+
+Current system metrics and key performance indicators. Values are updated in real-time and color-coded based on thresholds.`;
+      }
+
+      // Default response for other intents
+      return `I found ${result.results?.length || 0} results for your query. ${result.confidence < 0.6 ? 'The results may not be exactly what you were looking for - try being more specific for better results.' : ''}`;
+      
+    } catch (error) {
+      console.error('Error generating enhanced response:', error);
+      return `I found some results for your query, but had trouble formatting the response. Please try rephrasing your question.`;
+    }
+  };
+
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const formatLogLevel = (level?: string) => {
+    if (!level) return null;
     
-    if (totalResults === 0) {
-      return `🔍 No results found for your query. Try asking about system metrics, logs, or performance data.`;
-    }
-
-    // Generate contextual responses based on intent
-    switch (intent) {
-      case 'analytics_anomalies':
-        return `🚨 Found ${totalResults} anomalies in your system. Let me analyze these for you...`;
-      case 'analytics_performance':
-        return `📊 Here's your performance analysis with ${totalResults} data points:`;
-      case 'analytics_metrics':
-        return `📈 Current system metrics (${totalResults} metrics collected):`;
-      case 'analytics_summary':
-        return `📋 System summary report with ${totalResults} key insights:`;
-      default:
-        return `✅ Found ${totalResults} results for your query:`;
-    }
-  };
-
-  const determineMessageType = (result: QueryResult): 'normal' | 'anomaly' | 'insight' | 'recommendation' => {
-    if (result.result?.anomalies && result.result.anomalies.length > 0) {
-      return 'anomaly';
-    }
-    if (result.result?.insights && result.result.insights.length > 0) {
-      return 'insight';
-    }
-    if (result.result?.recommendations && result.result.recommendations.length > 0) {
-      return 'recommendation';
-    }
-    return 'normal';
-  };
-
-  const generateAnomalyInsights = (anomalies: AnomalyData[]): string => {
-    const criticalCount = anomalies.filter(a => a.severity === 'critical').length;
-    const highCount = anomalies.filter(a => a.severity === 'high').length;
+    const levelColors = {
+      'ERROR': 'bg-red-100 text-red-800 border-red-200',
+      'WARN': 'bg-yellow-100 text-yellow-800 border-yellow-200',
+      'INFO': 'bg-blue-100 text-blue-800 border-blue-200',
+      'DEBUG': 'bg-gray-100 text-gray-800 border-gray-200',
+    };
     
-    if (criticalCount > 0) {
-      return `🚨 CRITICAL: Detected ${criticalCount} critical anomalies requiring immediate attention! ${highCount > 0 ? `Also found ${highCount} high-priority issues.` : ''}`;
-    } else if (highCount > 0) {
-      return `⚠️ HIGH PRIORITY: Found ${highCount} high-priority anomalies that should be investigated soon.`;
-    } else {
-      return `ℹ️ MONITORING: Detected ${anomalies.length} minor anomalies. System is generally stable.`;
-    }
+    const colorClass = levelColors[level.toUpperCase() as keyof typeof levelColors] || 'bg-gray-100 text-gray-800 border-gray-200';
+    
+    return (
+      <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
+        {level.toUpperCase()}
+      </span>
+    );
   };
 
-  const handleSuggestedQuery = (query: string) => {
-    setInputValue(query);
+  const extractLogLevel = (message: string): string => {
+    const levelMatch = message.match(/\[(ERROR|WARN|WARNING|INFO|DEBUG)\]/i);
+    return levelMatch ? levelMatch[1].toUpperCase() : 'INFO';
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
+  const formatLogTimestamp = (timestamp: string): string => {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
   };
+
+  const formatTimestamp = (timestamp: string): string => {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
+  };
+
+  const TerminalLogDisplay: React.FC<{ logs: any[] }> = ({ logs }) => {
+    // Sort logs by timestamp (newest first for terminal-like display)
+    const sortedLogs = [...logs].sort((a, b) => 
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+
+    const getLogLevelColor = (level: string) => {
+      const levelColors = {
+        'ERROR': 'text-red-400',
+        'WARN': 'text-yellow-400',
+        'WARNING': 'text-yellow-400',
+        'INFO': 'text-blue-400',
+        'DEBUG': 'text-gray-400',
+      };
+      return levelColors[level as keyof typeof levelColors] || 'text-gray-400';
+    };
+
+    const getLogLevelBg = (level: string) => {
+      const levelBgs = {
+        'ERROR': 'bg-red-500/20 border border-red-500/30',
+        'WARN': 'bg-yellow-500/20 border border-yellow-500/30',
+        'WARNING': 'bg-yellow-500/20 border border-yellow-500/30',
+        'INFO': 'bg-blue-500/20 border border-blue-500/30',
+        'DEBUG': 'bg-gray-500/20 border border-gray-500/30',
+      };
+      return levelBgs[level as keyof typeof levelBgs] || 'bg-gray-500/20 border border-gray-500/30';
+    };
+
+    const highlightLogMessage = (message: string) => {
+      // Clean up timestamp prefixes
+      const cleanMessage = message.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s+/, '').replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+/, '');
+      return cleanMessage;
+    };
+
+    return (
+      <div className="bg-dark-bg rounded-xl border border-gray-700 overflow-hidden shadow-lg">
+        <div className="bg-gradient-to-r from-dark-surface to-dark-card px-4 py-3 border-b border-gray-700">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="p-1.5 bg-neon-green-500/20 rounded-lg">
+                <Terminal className="w-4 h-4 text-neon-green-500" />
+              </div>
+              <div>
+                <span className="text-neon-green-500 font-mono text-sm font-medium">Container Logs</span>
+                <span className="text-text-muted text-xs ml-2">({logs.length} entries)</span>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2">
+              <button className="p-1.5 hover:bg-dark-card rounded-lg transition-colors">
+                <Copy className="w-3 h-3 text-text-muted" />
+              </button>
+              <button className="p-1.5 hover:bg-dark-card rounded-lg transition-colors">
+                <Download className="w-3 h-3 text-text-muted" />
+              </button>
+              <button className="p-1.5 hover:bg-dark-card rounded-lg transition-colors">
+                <Filter className="w-3 h-3 text-text-muted" />
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <div className="max-h-96 overflow-y-auto">
+          <div className="p-2 space-y-0.5 font-mono text-sm">
+            {sortedLogs.map((log, index) => {
+              const logLevel = extractLogLevel(log.message);
+              const levelColor = getLogLevelColor(logLevel);
+              const levelBg = getLogLevelBg(logLevel);
+              
+              return (
+                <div 
+                  key={log.id || index} 
+                  className="group flex items-start space-x-3 hover:bg-dark-surface/50 px-3 py-2 rounded-lg transition-colors cursor-pointer border-l-2 border-transparent hover:border-neon-purple-500/30"
+                >
+                  <span className="text-text-muted text-xs w-20 flex-shrink-0 font-medium">
+                    {formatLogTimestamp(log.timestamp)}
+                  </span>
+                  <span className={`text-xs w-16 flex-shrink-0 font-bold px-2 py-0.5 rounded ${levelColor} ${levelBg}`}>
+                    {logLevel}
+                  </span>
+                  <span className="text-neon-purple-500 text-xs w-28 flex-shrink-0 truncate font-medium bg-neon-purple-500/10 px-2 py-0.5 rounded">
+                    {log.container.replace('/repathon-', '').replace('-1', '')}
+                  </span>
+                  <span className="text-text-primary flex-1 break-words group-hover:text-white transition-colors">
+                    {highlightLogMessage(log.message)}
+                  </span>
+                  <button className="opacity-0 group-hover:opacity-100 p-1 hover:bg-dark-card rounded transition-all">
+                    <ExternalLink className="w-3 h-3 text-text-muted" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        
+        <div className="bg-dark-surface px-4 py-2 border-t border-gray-700">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center space-x-4">
+              <span className="text-text-muted">
+                Showing {logs.length} of {logs.length} entries
+              </span>
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-neon-green-500 rounded-full animate-pulse"></div>
+                <span className="text-neon-green-500 font-medium">Live</span>
+              </div>
+            </div>
+            <button className="text-neon-purple-500 hover:text-neon-purple-400 transition-colors">
+              View Full Logs →
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const LogEntryComponent: React.FC<{ log: LogEntry; index: number }> = ({ log, index }) => (
+    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-2 font-mono text-xs">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center space-x-2">
+          <span className="text-gray-500">#{index + 1}</span>
+          <Container className="w-3 h-3 text-blue-500" />
+          <span className="font-semibold text-blue-700">{log.container}</span>
+          {log.level && formatLogLevel(log.level)}
+        </div>
+        <div className="flex items-center space-x-1 text-gray-500">
+          <Clock className="w-3 h-3" />
+          <span>{new Date(log.timestamp).toLocaleString()}</span>
+        </div>
+      </div>
+      <div className="bg-white border border-gray-100 rounded p-2 text-gray-800 leading-relaxed">
+        {log.message}
+      </div>
+    </div>
+  );
 
   const getMessageIcon = (message: Message) => {
-    switch (message.type) {
-      case 'user':
-        return <User className="w-6 h-6 text-black" />;
-      case 'system':
-        return <Shield className="w-6 h-6 text-orange-500" />;
-      default:
-        switch (message.messageType) {
-          case 'anomaly':
-            return <AlertTriangle className="w-6 h-6 text-red-500" />;
-          case 'insight':
-            return <Lightbulb className="w-6 h-6 text-yellow-500" />;
-          case 'recommendation':
-            return <Target className="w-6 h-6 text-green-500" />;
-          default:
-            return <Bot className="w-6 h-6 text-neon-purple-500" />;
-        }
+    if (message.sender === 'user') {
+      return <User className="w-6 h-6 text-black" />;
     }
-  };
-
-  const getMessageBorderColor = (message: Message) => {
-    switch (message.messageType) {
-      case 'anomaly':
-        return 'border-l-red-500';
-      case 'insight':
-        return 'border-l-yellow-500';
-      case 'recommendation':
-        return 'border-l-green-500';
-      default:
-        return message.type === 'user' ? 'border-l-blue-500' : 'border-l-purple-500';
+    
+    if (message.isError) {
+      return <AlertTriangle className="w-6 h-6 text-red-500" />;
     }
+    
+    return <Bot className="w-6 h-6 text-neon-purple-500" />;
   };
 
   const renderSystemHealthWidget = () => {
@@ -477,12 +702,12 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
   };
 
   const renderQueryResult = (result: QueryResult) => {
-    if (!result.success || !result.result) return null;
+    if (!result.success) return null;
 
     return (
       <div className="mt-4 space-y-4">
         {/* Anomalies Section */}
-        {result.result.anomalies && result.result.anomalies.length > 0 && (
+        {result.anomalies && result.anomalies.length > 0 && (
           <div className="bg-gradient-to-r from-red-50 to-red-100 rounded-xl p-6 border-l-4 border-red-500 shadow-sm">
             <h4 className="font-bold text-red-800 mb-4 flex items-center gap-3 text-lg">
               <div className="p-2 bg-red-500 rounded-lg">
@@ -490,11 +715,11 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
               </div>
               Critical Anomalies Detected
               <span className="bg-red-500 text-white px-3 py-1 rounded-full text-sm font-medium">
-                {result.result.anomalies.length}
+                {result.anomalies.length}
               </span>
             </h4>
             <div className="grid gap-4">
-              {result.result.anomalies.map((anomaly, index) => (
+              {result.anomalies.map((anomaly, index) => (
                 <div key={index} className="bg-white rounded-lg p-4 border border-red-200 shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-3">
@@ -537,7 +762,7 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
         )}
 
         {/* Regular Results */}
-        {result.result.results && result.result.results.length > 0 && (
+        {result.results && result.results.length > 0 && (
           <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border-l-4 border-blue-500 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <h4 className="font-bold text-blue-800 flex items-center gap-3 text-lg">
@@ -546,28 +771,28 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
                 </div>
                 Query Results
                 <span className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm font-medium">
-                  {result.result.count}
+                  {result.count || result.results.length}
                 </span>
               </h4>
-              {result.result.metadata && (
+              {result.metadata && (
                 <div className="bg-white rounded-lg px-4 py-2 border border-blue-200">
                   <div className="text-xs text-blue-600 font-medium">
-                    ⚡ {result.result.metadata.processing_time_ms}ms • 
-                    🎯 {(result.result.metadata.confidence * 100).toFixed(1)}% confidence
+                    ⚡ {result.metadata.processing_time_ms}ms • 
+                    🎯 {(result.metadata.confidence * 100).toFixed(1)}% confidence
                   </div>
                 </div>
               )}
             </div>
             
             <div className="max-h-80 overflow-y-auto space-y-3 pr-2">
-              {result.result.results.slice(0, 10).map((item: any, index: number) => (
+              {result.results.slice(0, 10).map((item: any, index: number) => (
                 <div key={index} className="bg-white rounded-lg p-4 border border-blue-200 shadow-sm hover:shadow-md transition-all hover:border-blue-300">
                   {typeof item === 'object' ? (
                     <div className="space-y-2">
                       {Object.entries(item).map(([key, value]) => (
                         <div key={key} className="flex justify-between items-center py-1">
                           <span className="text-gray-600 capitalize font-medium text-sm">{key.replace(/_/g, ' ')}:</span>
-                          <span className="font-mono text-sm bg-gray-100 px-2 py-1 rounded text-gray-800 max-w-xs truncate">
+                          <span className="font-mono text-sm bg-gray-100 px-2 py-2 rounded text-gray-800 max-w-xs truncate">
                             {String(value)}
                           </span>
                         </div>
@@ -582,12 +807,12 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
               ))}
             </div>
             
-            {result.result.results.length > 10 && (
+            {result.results.length > 10 && (
               <div className="mt-4 text-center">
                 <div className="inline-flex items-center gap-2 bg-white border border-blue-200 rounded-lg px-4 py-2 text-blue-700">
                   <Eye className="w-4 h-4" />
                   <span className="text-sm font-medium">
-                    Showing 10 of {result.result.results.length} results
+                    Showing 10 of {result.results.length} results
                   </span>
                 </div>
               </div>
@@ -596,7 +821,7 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
         )}
 
         {/* Insights Section */}
-        {result.result.insights && result.result.insights.length > 0 && (
+        {result.insights && result.insights.length > 0 && (
           <div className="bg-gradient-to-r from-yellow-50 to-amber-50 rounded-xl p-6 border-l-4 border-yellow-500 shadow-sm">
             <h4 className="font-bold text-yellow-800 mb-4 flex items-center gap-3 text-lg">
               <div className="p-2 bg-yellow-500 rounded-lg">
@@ -604,11 +829,11 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
               </div>
               AI Insights
               <span className="bg-yellow-500 text-white px-3 py-1 rounded-full text-sm font-medium">
-                {result.result.insights.length}
+                {result.insights.length}
               </span>
             </h4>
             <div className="space-y-3">
-              {result.result.insights.map((insight, index) => (
+              {result.insights.map((insight, index) => (
                 <div key={index} className="bg-white rounded-lg p-4 border border-yellow-200 shadow-sm">
                   <div className="flex items-start gap-3">
                     <div className="w-2 h-2 bg-yellow-500 rounded-full mt-2 flex-shrink-0"></div>
@@ -621,7 +846,7 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
         )}
 
         {/* Recommendations Section */}
-        {result.result.recommendations && result.result.recommendations.length > 0 && (
+        {result.recommendations && result.recommendations.length > 0 && (
           <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-6 border-l-4 border-green-500 shadow-sm">
             <h4 className="font-bold text-green-800 mb-4 flex items-center gap-3 text-lg">
               <div className="p-2 bg-green-500 rounded-lg">
@@ -629,11 +854,11 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
               </div>
               Recommendations
               <span className="bg-green-500 text-white px-3 py-1 rounded-full text-sm font-medium">
-                {result.result.recommendations.length}
+                {result.recommendations.length}
               </span>
             </h4>
             <div className="space-y-3">
-              {result.result.recommendations.map((rec, index) => (
+              {result.recommendations.map((rec, index) => (
                 <div key={index} className="bg-white rounded-lg p-4 border border-green-200 shadow-sm">
                   <div className="flex items-start gap-3">
                     <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></div>
@@ -648,192 +873,11 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     );
   };
 
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  const formatLogLevel = (level?: string) => {
-    if (!level) return null;
-    
-    const levelColors = {
-      'ERROR': 'bg-red-100 text-red-800 border-red-200',
-      'WARN': 'bg-yellow-100 text-yellow-800 border-yellow-200',
-      'INFO': 'bg-blue-100 text-blue-800 border-blue-200',
-      'DEBUG': 'bg-gray-100 text-gray-800 border-gray-200',
-    };
-    
-    const colorClass = levelColors[level.toUpperCase() as keyof typeof levelColors] || 'bg-gray-100 text-gray-800 border-gray-200';
-    
-    return (
-      <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
-        {level.toUpperCase()}
-      </span>
-    );
-  };
-
-  const extractLogLevel = (message: string): string => {
-    const levelMatch = message.match(/\[(ERROR|WARN|WARNING|INFO|DEBUG)\]/i);
-    return levelMatch ? levelMatch[1].toUpperCase() : 'INFO';
-  };
-
-  const formatLogTimestamp = (timestamp: string): string => {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    });
-  };
-
-  const formatTimestamp = (timestamp: string): string => {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    });
-  };
-
-  const TerminalLogDisplay: React.FC<{ logs: any[] }> = ({ logs }) => {
-    // Sort logs by timestamp (newest first for terminal-like display)
-    const sortedLogs = [...logs].sort((a, b) => 
-      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    );
-
-    const getLogLevelColor = (level: string) => {
-      const levelColors = {
-        'ERROR': 'text-red-400',
-        'WARN': 'text-yellow-400',
-        'WARNING': 'text-yellow-400',
-        'INFO': 'text-blue-400',
-        'DEBUG': 'text-gray-400',
-      };
-      return levelColors[level as keyof typeof levelColors] || 'text-gray-400';
-    };
-
-    const getLogLevelBg = (level: string) => {
-      const levelBgs = {
-        'ERROR': 'bg-red-500/20 border border-red-500/30',
-        'WARN': 'bg-yellow-500/20 border border-yellow-500/30',
-        'WARNING': 'bg-yellow-500/20 border border-yellow-500/30',
-        'INFO': 'bg-blue-500/20 border border-blue-500/30',
-        'DEBUG': 'bg-gray-500/20 border border-gray-500/30',
-      };
-      return levelBgs[level as keyof typeof levelBgs] || 'bg-gray-500/20 border border-gray-500/30';
-    };
-
-    const highlightLogMessage = (message: string) => {
-      // Clean up timestamp prefixes
-      const cleanMessage = message.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s+/, '').replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+/, '');
-      return cleanMessage;
-    };
-
-    return (
-      <div className="bg-dark-bg rounded-xl border border-gray-700 overflow-hidden shadow-lg">
-        <div className="bg-gradient-to-r from-dark-surface to-dark-card px-4 py-3 border-b border-gray-700">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="p-1.5 bg-neon-green-500/20 rounded-lg">
-                <Terminal className="w-4 h-4 text-neon-green-500" />
-              </div>
-              <div>
-                <span className="text-neon-green-500 font-mono text-sm font-medium">Container Logs</span>
-                <span className="text-text-muted text-xs ml-2">({logs.length} entries)</span>
-              </div>
-            </div>
-            <div className="flex items-center space-x-2">
-              <button className="p-1.5 hover:bg-dark-card rounded-lg transition-colors">
-                <Copy className="w-3 h-3 text-text-muted" />
-              </button>
-              <button className="p-1.5 hover:bg-dark-card rounded-lg transition-colors">
-                <Download className="w-3 h-3 text-text-muted" />
-              </button>
-              <button className="p-1.5 hover:bg-dark-card rounded-lg transition-colors">
-                <Filter className="w-3 h-3 text-text-muted" />
-              </button>
-            </div>
-          </div>
-        </div>
-        
-        <div className="max-h-96 overflow-y-auto">
-          <div className="p-2 space-y-0.5 font-mono text-sm">
-            {sortedLogs.map((log, index) => {
-              const logLevel = extractLogLevel(log.message);
-              const levelColor = getLogLevelColor(logLevel);
-              const levelBg = getLogLevelBg(logLevel);
-              
-              return (
-                <div 
-                  key={log.id || index} 
-                  className="group flex items-start space-x-3 hover:bg-dark-surface/50 px-3 py-2 rounded-lg transition-colors cursor-pointer border-l-2 border-transparent hover:border-neon-purple-500/30"
-                >
-                  <span className="text-text-muted text-xs w-20 flex-shrink-0 font-medium">
-                    {formatLogTimestamp(log.timestamp)}
-                  </span>
-                  <span className={`text-xs w-16 flex-shrink-0 font-bold px-2 py-0.5 rounded ${levelColor} ${levelBg}`}>
-                    {logLevel}
-                  </span>
-                  <span className="text-neon-purple-500 text-xs w-28 flex-shrink-0 truncate font-medium bg-neon-purple-500/10 px-2 py-0.5 rounded">
-                    {log.container.replace('/repathon-', '').replace('-1', '')}
-                  </span>
-                  <span className="text-text-primary flex-1 break-words group-hover:text-white transition-colors">
-                    {highlightLogMessage(log.message)}
-                  </span>
-                  <button className="opacity-0 group-hover:opacity-100 p-1 hover:bg-dark-card rounded transition-all">
-                    <ExternalLink className="w-3 h-3 text-text-muted" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        
-        <div className="bg-dark-surface px-4 py-2 border-t border-gray-700">
-          <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center space-x-4">
-              <span className="text-text-muted">
-                Showing {logs.length} of {logs.length} entries
-              </span>
-              <div className="flex items-center space-x-2">
-                <div className="w-2 h-2 bg-neon-green-500 rounded-full animate-pulse"></div>
-                <span className="text-neon-green-500 font-medium">Live</span>
-              </div>
-            </div>
-            <button className="text-neon-purple-500 hover:text-neon-purple-400 transition-colors">
-              View Full Logs →
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const LogEntryComponent: React.FC<{ log: LogEntry; index: number }> = ({ log, index }) => (
-    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-2 font-mono text-xs">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center space-x-2">
-          <span className="text-gray-500">#{index + 1}</span>
-          <Container className="w-3 h-3 text-blue-500" />
-          <span className="font-semibold text-blue-700">{log.container}</span>
-          {log.level && formatLogLevel(log.level)}
-        </div>
-        <div className="flex items-center space-x-1 text-gray-500">
-          <Clock className="w-3 h-3" />
-          <span>{new Date(log.timestamp).toLocaleString()}</span>
-        </div>
-      </div>
-      <div className="bg-white border border-gray-100 rounded p-2 text-gray-800 leading-relaxed">
-        {log.message}
-      </div>
-    </div>
-  );
-
   const MethodCallComponent: React.FC<{ queryResult: QueryResult }> = ({ queryResult }) => {
-    const methodCalled = queryResult.result?.query_info?.method_called || 'process_query';
-    const queryType = queryResult.result?.metadata?.intent || 'unknown';
+    const methodCalled = queryResult.query_info?.method_called || 'process_query';
+    const queryType = queryResult.metadata?.intent || queryResult.intent || 'unknown';
     const executionTime = queryResult.processing_time_ms || 0;
-    const totalResults = queryResult.result?.count || 0;
+    const totalResults = queryResult.count || queryResult.results?.length || 0;
   
     return (
       <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-3 text-sm">
@@ -859,12 +903,16 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     );
   };
 
-  const suggestedQuestions = [
-    "show me recent logs",
-    "backend container logs", 
-    "logs from last hour",
-    "error logs today"
-  ];
+  const handleSuggestedQuery = (query: string) => {
+    setInputValue(query);
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
 
   return (
     <div className="flex flex-col h-full bg-dark-bg text-text-primary">
@@ -927,16 +975,16 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
           </div>
         ) : (
           messages.map((message) => (
-            <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div key={message.id} className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[85%] ${
-                message.type === 'user' 
+                message.sender === 'user' 
                   ? 'bg-gradient-purple text-white shadow-purple-500/20' 
                   : 'bg-dark-surface border border-gray-700'
               } rounded-xl p-5 shadow-lg`}>
                 <div className="flex items-start space-x-4">
                   <div className="flex-shrink-0">
                     <div className={`p-2 rounded-lg ${
-                      message.type === 'user' 
+                      message.sender === 'user' 
                         ? 'bg-white/90' 
                         : 'bg-neon-purple-500/20'
                     }`}>
@@ -946,49 +994,49 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-3">
                       <div className={`text-sm font-medium ${
-                        message.type === 'user' ? 'text-black/80' : 'text-text-muted'
+                        message.sender === 'user' ? 'text-black/80' : 'text-text-muted'
                       }`}>
-                        {message.type === 'user' ? 'You' : 'AI Assistant'}
+                        {message.sender === 'user' ? 'You' : 'AI Assistant'}
                       </div>
                       <div className={`text-xs ${
-                        message.type === 'user' ? 'text-black/60' : 'text-text-muted'
+                        message.sender === 'user' ? 'text-black/60' : 'text-text-muted'
                       }`}>
                         {formatTime(message.timestamp)}
                       </div>
                     </div>
-                    <div className={message.type === 'user' ? 'text-black font-medium' : 'text-text-primary'}>
-                      {message.type === 'user' ? (
+                    <div className={message.sender === 'user' ? 'text-black font-medium' : 'text-text-primary'}>
+                      {message.sender === 'user' ? (
                         <span className="text-black">{message.content}</span>
                       ) : (
                         <div className="space-y-4">
                           {message.queryResult && <MethodCallComponent queryResult={message.queryResult} />}
                           {message.queryResult && renderQueryResult(message.queryResult)}
-                          {message.queryResult?.result?.results && message.queryResult.result.results.length > 0 && (
+                          {message.queryResult?.results && message.queryResult.results.length > 0 && (
                             <div>
-                              {message.queryResult.result.results[0]?.timestamp && 
-                               message.queryResult.result.results[0]?.container && 
-                               message.queryResult.result.results[0]?.message ? (
-                                <TerminalLogDisplay logs={message.queryResult.result.results} />
+                              {message.queryResult.results[0]?.timestamp && 
+                               message.queryResult.results[0]?.container && 
+                               message.queryResult.results[0]?.message ? (
+                                <TerminalLogDisplay logs={message.queryResult.results} />
                               ) : (
                                 <div className="bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg p-4">
                                   <div className="flex items-center space-x-2 mb-4">
                                     <Terminal className="w-4 h-4 text-gray-600 dark:text-gray-400" />
                                     <h4 className="font-semibold text-gray-900 dark:text-gray-100">
-                                      Query Results ({message.queryResult.result.results.length})
+                                      Query Results ({message.queryResult.results.length})
                                     </h4>
                                   </div>
                                   <div className="max-h-96 overflow-y-auto space-y-2">
-                                    {message.queryResult.result.results.slice(0, 10).map((result, index) => (
+                                    {message.queryResult.results.slice(0, 10).map((result, index) => (
                                       <div key={index} className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
                                         <pre className="text-xs font-mono text-gray-700 dark:text-gray-300 overflow-x-auto whitespace-pre-wrap">
                                           {JSON.stringify(result, null, 2)}
                                         </pre>
                                       </div>
                                     ))}
-                                    {message.queryResult.result.results.length > 10 && (
+                                    {message.queryResult.results.length > 10 && (
                                       <div className="text-center py-2">
                                         <span className="text-sm text-gray-500 bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded-full">
-                                          ... and {message.queryResult.result.results.length - 10} more entries
+                                          ... and {message.queryResult.results.length - 10} more entries
                                         </span>
                                       </div>
                                     )}

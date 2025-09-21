@@ -54,33 +54,53 @@ class ImprovedIntentClassifier:
         self._initialize_embeddings()
     
     def _build_intent_examples(self) -> List[IntentExample]:
-        """Build comprehensive examples for each intent type."""
+        """Build comprehensive training examples for intent classification."""
         examples = [
-            # SEARCH_LOGS examples
-            IntentExample("show me the latest logs", QueryIntent.SEARCH_LOGS),
-            IntentExample("get container logs for nginx", QueryIntent.SEARCH_LOGS),
-            IntentExample("find error logs from yesterday", QueryIntent.SEARCH_LOGS),
-            IntentExample("display recent log entries", QueryIntent.SEARCH_LOGS),
-            IntentExample("fetch logs containing 'database connection'", QueryIntent.SEARCH_LOGS),
-            IntentExample("show all logs from the api container", QueryIntent.SEARCH_LOGS),
-            IntentExample("get debug logs for the last hour", QueryIntent.SEARCH_LOGS),
-            IntentExample("list application logs", QueryIntent.SEARCH_LOGS),
-            IntentExample("retrieve system logs", QueryIntent.SEARCH_LOGS),
-            IntentExample("show me what happened in the logs", QueryIntent.SEARCH_LOGS),
+            # SEARCH_LOGS examples - Enhanced with more variations
+            IntentExample("show me recent logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("display latest log entries", QueryIntent.SEARCH_LOGS),
+            IntentExample("get logs from the last hour", QueryIntent.SEARCH_LOGS),
+            IntentExample("find error logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("show me application logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("display container logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("get system logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("show me debug information", QueryIntent.SEARCH_LOGS),
+            IntentExample("fetch log data", QueryIntent.SEARCH_LOGS),
+            IntentExample("view log files", QueryIntent.SEARCH_LOGS),
+            IntentExample("I need to see the logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("can you show me what happened in the logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("display log entries for today", QueryIntent.SEARCH_LOGS),
+            IntentExample("show me failed requests in logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("get authentication logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("show me database logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("display nginx logs", QueryIntent.SEARCH_LOGS),
+            IntentExample("what do the logs say", QueryIntent.SEARCH_LOGS),
+            IntentExample("check the log files", QueryIntent.SEARCH_LOGS),
+            IntentExample("show me what's in the logs", QueryIntent.SEARCH_LOGS),
             
-            # GENERATE_REPORT examples
+            # GENERATE_REPORT examples - Enhanced
             IntentExample("generate a security report", QueryIntent.GENERATE_REPORT),
-            IntentExample("create a summary of today's events", QueryIntent.GENERATE_REPORT),
-            IntentExample("build a performance report", QueryIntent.GENERATE_REPORT),
-            IntentExample("produce an incident summary", QueryIntent.GENERATE_REPORT),
-            IntentExample("make a daily digest", QueryIntent.GENERATE_REPORT),
+            IntentExample("create a summary report", QueryIntent.GENERATE_REPORT),
+            IntentExample("build a weekly report", QueryIntent.GENERATE_REPORT),
+            IntentExample("make a monthly analysis", QueryIntent.GENERATE_REPORT),
             IntentExample("compile system statistics", QueryIntent.GENERATE_REPORT),
             IntentExample("export usage analytics", QueryIntent.GENERATE_REPORT),
             IntentExample("create a monthly overview", QueryIntent.GENERATE_REPORT),
             IntentExample("generate metrics dashboard", QueryIntent.GENERATE_REPORT),
             IntentExample("build error rate analysis", QueryIntent.GENERATE_REPORT),
+            IntentExample("create incident report", QueryIntent.GENERATE_REPORT),
+            IntentExample("make a daily digest", QueryIntent.GENERATE_REPORT),
+            IntentExample("generate performance report", QueryIntent.GENERATE_REPORT),
+            IntentExample("create security analysis", QueryIntent.GENERATE_REPORT),
+            IntentExample("build compliance report", QueryIntent.GENERATE_REPORT),
+            IntentExample("make executive summary", QueryIntent.GENERATE_REPORT),
+            IntentExample("generate audit report", QueryIntent.GENERATE_REPORT),
+            IntentExample("create status report", QueryIntent.GENERATE_REPORT),
+            IntentExample("build trend analysis", QueryIntent.GENERATE_REPORT),
+            IntentExample("make operational report", QueryIntent.GENERATE_REPORT),
+            IntentExample("generate system health report", QueryIntent.GENERATE_REPORT),
             
-            # INVESTIGATE examples
+            # INVESTIGATE examples - Enhanced
             IntentExample("investigate this IP address: 192.168.1.100", QueryIntent.INVESTIGATE),
             IntentExample("what caused the system failure?", QueryIntent.INVESTIGATE),
             IntentExample("analyze suspicious activity", QueryIntent.INVESTIGATE),
@@ -91,8 +111,23 @@ class ImprovedIntentClassifier:
             IntentExample("investigate security breach", QueryIntent.INVESTIGATE),
             IntentExample("find out what happened to user sessions", QueryIntent.INVESTIGATE),
             IntentExample("troubleshoot database connectivity", QueryIntent.INVESTIGATE),
+            IntentExample("what went wrong with the deployment", QueryIntent.INVESTIGATE),
+            IntentExample("why are users getting errors", QueryIntent.INVESTIGATE),
+            IntentExample("investigate the performance issue", QueryIntent.INVESTIGATE),
+            IntentExample("what's causing the high CPU usage", QueryIntent.INVESTIGATE),
+            IntentExample("analyze the failed login attempts", QueryIntent.INVESTIGATE),
+            IntentExample("investigate the network issues", QueryIntent.INVESTIGATE),
+            IntentExample("what happened during the outage", QueryIntent.INVESTIGATE),
+            IntentExample("why is the service down", QueryIntent.INVESTIGATE),
+            IntentExample("investigate the memory leak", QueryIntent.INVESTIGATE),
+            IntentExample("what's wrong with the database", QueryIntent.INVESTIGATE),
+            IntentExample("help me understand this error", QueryIntent.INVESTIGATE),
+            IntentExample("can you help me figure out what happened", QueryIntent.INVESTIGATE),
+            IntentExample("I need to understand why this failed", QueryIntent.INVESTIGATE),
+            IntentExample("what's the cause of this problem", QueryIntent.INVESTIGATE),
+            IntentExample("help me debug this issue", QueryIntent.INVESTIGATE),
             
-            # SHOW_ALERTS examples
+            # SHOW_ALERTS examples - Enhanced
             IntentExample("show me current alerts", QueryIntent.SHOW_ALERTS),
             IntentExample("display critical notifications", QueryIntent.SHOW_ALERTS),
             IntentExample("get urgent warnings", QueryIntent.SHOW_ALERTS),
@@ -103,8 +138,18 @@ class ImprovedIntentClassifier:
             IntentExample("show me what's broken", QueryIntent.SHOW_ALERTS),
             IntentExample("list failed services", QueryIntent.SHOW_ALERTS),
             IntentExample("display error notifications", QueryIntent.SHOW_ALERTS),
+            IntentExample("what alerts are active", QueryIntent.SHOW_ALERTS),
+            IntentExample("show me any problems", QueryIntent.SHOW_ALERTS),
+            IntentExample("are there any issues", QueryIntent.SHOW_ALERTS),
+            IntentExample("display current problems", QueryIntent.SHOW_ALERTS),
+            IntentExample("show me system warnings", QueryIntent.SHOW_ALERTS),
+            IntentExample("what's currently failing", QueryIntent.SHOW_ALERTS),
+            IntentExample("show me critical issues", QueryIntent.SHOW_ALERTS),
+            IntentExample("display urgent alerts", QueryIntent.SHOW_ALERTS),
+            IntentExample("what needs attention", QueryIntent.SHOW_ALERTS),
+            IntentExample("show me active alarms", QueryIntent.SHOW_ALERTS),
             
-            # ANALYZE_TRENDS examples
+            # ANALYZE_TRENDS examples - Enhanced
             IntentExample("analyze traffic trends over time", QueryIntent.ANALYZE_TRENDS),
             IntentExample("show performance patterns", QueryIntent.ANALYZE_TRENDS),
             IntentExample("compare this week vs last week", QueryIntent.ANALYZE_TRENDS),
@@ -115,8 +160,18 @@ class ImprovedIntentClassifier:
             IntentExample("track resource usage over time", QueryIntent.ANALYZE_TRENDS),
             IntentExample("analyze growth patterns", QueryIntent.ANALYZE_TRENDS),
             IntentExample("show usage statistics trends", QueryIntent.ANALYZE_TRENDS),
+            IntentExample("how has performance changed", QueryIntent.ANALYZE_TRENDS),
+            IntentExample("show me trends in the data", QueryIntent.ANALYZE_TRENDS),
+            IntentExample("analyze patterns over time", QueryIntent.ANALYZE_TRENDS),
+            IntentExample("compare performance metrics", QueryIntent.ANALYZE_TRENDS),
+            IntentExample("show me historical data", QueryIntent.ANALYZE_TRENDS),
+            IntentExample("track changes over time", QueryIntent.ANALYZE_TRENDS),
+            IntentExample("analyze system trends", QueryIntent.ANALYZE_TRENDS),
+            IntentExample("show me usage patterns", QueryIntent.ANALYZE_TRENDS),
+            IntentExample("compare different time periods", QueryIntent.ANALYZE_TRENDS),
+            IntentExample("analyze metric trends", QueryIntent.ANALYZE_TRENDS),
             
-            # ANALYTICS_SUMMARY examples
+            # ANALYTICS_SUMMARY examples - Enhanced
             IntentExample("give me a system summary", QueryIntent.ANALYTICS_SUMMARY),
             IntentExample("show me an overview of the system", QueryIntent.ANALYTICS_SUMMARY),
             IntentExample("generate a summary report", QueryIntent.ANALYTICS_SUMMARY),
@@ -127,8 +182,18 @@ class ImprovedIntentClassifier:
             IntentExample("summarize system activity", QueryIntent.ANALYTICS_SUMMARY),
             IntentExample("show me the weekly summary", QueryIntent.ANALYTICS_SUMMARY),
             IntentExample("provide system analytics summary", QueryIntent.ANALYTICS_SUMMARY),
+            IntentExample("what's the overall status", QueryIntent.ANALYTICS_SUMMARY),
+            IntentExample("give me a high-level overview", QueryIntent.ANALYTICS_SUMMARY),
+            IntentExample("show me the big picture", QueryIntent.ANALYTICS_SUMMARY),
+            IntentExample("summarize everything", QueryIntent.ANALYTICS_SUMMARY),
+            IntentExample("what's happening overall", QueryIntent.ANALYTICS_SUMMARY),
+            IntentExample("give me the executive summary", QueryIntent.ANALYTICS_SUMMARY),
+            IntentExample("show me key highlights", QueryIntent.ANALYTICS_SUMMARY),
+            IntentExample("provide a status overview", QueryIntent.ANALYTICS_SUMMARY),
+            IntentExample("summarize the current state", QueryIntent.ANALYTICS_SUMMARY),
+            IntentExample("give me the main points", QueryIntent.ANALYTICS_SUMMARY),
             
-            # ANALYTICS_ANOMALIES examples
+            # ANALYTICS_ANOMALIES examples - Enhanced
             IntentExample("detect anomalies in the system", QueryIntent.ANALYTICS_ANOMALIES),
             IntentExample("show me any unusual activity", QueryIntent.ANALYTICS_ANOMALIES),
             IntentExample("find anomalies in the data", QueryIntent.ANALYTICS_ANOMALIES),
@@ -139,8 +204,18 @@ class ImprovedIntentClassifier:
             IntentExample("show me abnormal activity", QueryIntent.ANALYTICS_ANOMALIES),
             IntentExample("detect system anomalies", QueryIntent.ANALYTICS_ANOMALIES),
             IntentExample("find irregular patterns", QueryIntent.ANALYTICS_ANOMALIES),
+            IntentExample("what looks unusual", QueryIntent.ANALYTICS_ANOMALIES),
+            IntentExample("show me anything strange", QueryIntent.ANALYTICS_ANOMALIES),
+            IntentExample("detect outliers", QueryIntent.ANALYTICS_ANOMALIES),
+            IntentExample("find abnormal behavior", QueryIntent.ANALYTICS_ANOMALIES),
+            IntentExample("show me unexpected patterns", QueryIntent.ANALYTICS_ANOMALIES),
+            IntentExample("detect irregular activity", QueryIntent.ANALYTICS_ANOMALIES),
+            IntentExample("find suspicious behavior", QueryIntent.ANALYTICS_ANOMALIES),
+            IntentExample("show me anomalous data", QueryIntent.ANALYTICS_ANOMALIES),
+            IntentExample("detect unusual trends", QueryIntent.ANALYTICS_ANOMALIES),
+            IntentExample("find strange patterns", QueryIntent.ANALYTICS_ANOMALIES),
             
-            # ANALYTICS_PERFORMANCE examples
+            # ANALYTICS_PERFORMANCE examples - Enhanced
             IntentExample("show me performance metrics", QueryIntent.ANALYTICS_PERFORMANCE),
             IntentExample("how is the system performing", QueryIntent.ANALYTICS_PERFORMANCE),
             IntentExample("generate a performance report", QueryIntent.ANALYTICS_PERFORMANCE),
@@ -151,8 +226,18 @@ class ImprovedIntentClassifier:
             IntentExample("display performance statistics", QueryIntent.ANALYTICS_PERFORMANCE),
             IntentExample("get performance insights", QueryIntent.ANALYTICS_PERFORMANCE),
             IntentExample("show me resource utilization", QueryIntent.ANALYTICS_PERFORMANCE),
+            IntentExample("how fast is the system", QueryIntent.ANALYTICS_PERFORMANCE),
+            IntentExample("show me response times", QueryIntent.ANALYTICS_PERFORMANCE),
+            IntentExample("what's the system throughput", QueryIntent.ANALYTICS_PERFORMANCE),
+            IntentExample("show me CPU usage", QueryIntent.ANALYTICS_PERFORMANCE),
+            IntentExample("display memory utilization", QueryIntent.ANALYTICS_PERFORMANCE),
+            IntentExample("show me disk performance", QueryIntent.ANALYTICS_PERFORMANCE),
+            IntentExample("what's the network performance", QueryIntent.ANALYTICS_PERFORMANCE),
+            IntentExample("show me latency metrics", QueryIntent.ANALYTICS_PERFORMANCE),
+            IntentExample("display performance benchmarks", QueryIntent.ANALYTICS_PERFORMANCE),
+            IntentExample("show me efficiency metrics", QueryIntent.ANALYTICS_PERFORMANCE),
             
-            # ANALYTICS_METRICS examples
+            # ANALYTICS_METRICS examples - Enhanced
             IntentExample("show me system metrics", QueryIntent.ANALYTICS_METRICS),
             IntentExample("display key metrics", QueryIntent.ANALYTICS_METRICS),
             IntentExample("get metric data", QueryIntent.ANALYTICS_METRICS),
@@ -163,6 +248,16 @@ class ImprovedIntentClassifier:
             IntentExample("show me operational metrics", QueryIntent.ANALYTICS_METRICS),
             IntentExample("display metric dashboard", QueryIntent.ANALYTICS_METRICS),
             IntentExample("show me metric analysis", QueryIntent.ANALYTICS_METRICS),
+            IntentExample("what are the current metrics", QueryIntent.ANALYTICS_METRICS),
+            IntentExample("show me KPIs", QueryIntent.ANALYTICS_METRICS),
+            IntentExample("display key indicators", QueryIntent.ANALYTICS_METRICS),
+            IntentExample("show me business metrics", QueryIntent.ANALYTICS_METRICS),
+            IntentExample("get technical metrics", QueryIntent.ANALYTICS_METRICS),
+            IntentExample("show me health metrics", QueryIntent.ANALYTICS_METRICS),
+            IntentExample("display usage metrics", QueryIntent.ANALYTICS_METRICS),
+            IntentExample("show me quality metrics", QueryIntent.ANALYTICS_METRICS),
+            IntentExample("get performance indicators", QueryIntent.ANALYTICS_METRICS),
+            IntentExample("show me monitoring data", QueryIntent.ANALYTICS_METRICS),
         ]
         
         return examples
@@ -208,6 +303,11 @@ class ImprovedIntentClassifier:
         Returns:
             Tuple of (predicted_intent, confidence_score)
         """
+        if not query or not query.strip():
+            return QueryIntent.UNKNOWN, 0.0
+            
+        query = query.strip()
+        
         if self.embedding_model is not None:
             # Use real sentence transformer
             query_embedding = self.embedding_model.encode([query])
@@ -220,15 +320,6 @@ class ImprovedIntentClassifier:
         
         # Compute similarities with all examples
         similarities = cosine_similarity(query_embedding, self.example_embeddings)[0]
-        
-        # Find the best matching example
-        best_match_idx = np.argmax(similarities)
-        best_similarity = similarities[best_match_idx]
-        best_intent = self.intent_examples[best_match_idx].intent
-        
-        # Apply confidence threshold
-        if best_similarity < 0.3:  # Low similarity threshold
-            return QueryIntent.UNKNOWN, best_similarity
         
         # Calculate intent-level confidence by averaging top matches for each intent
         intent_scores = {}
@@ -243,8 +334,9 @@ class ImprovedIntentClassifier:
             ]
             
             if intent_similarities:
-                # Use the maximum similarity for this intent
-                intent_scores[intent] = max(intent_similarities)
+                # Use the average of top 3 similarities for this intent
+                top_similarities = sorted(intent_similarities, reverse=True)[:3]
+                intent_scores[intent] = sum(top_similarities) / len(top_similarities)
         
         if not intent_scores:
             return QueryIntent.UNKNOWN, 0.0
@@ -253,8 +345,14 @@ class ImprovedIntentClassifier:
         best_intent = max(intent_scores, key=intent_scores.get)
         confidence = intent_scores[best_intent]
         
-        return best_intent, confidence
-    
+        # Apply improved confidence thresholds
+        if confidence < 0.2:  # Very low similarity
+            return QueryIntent.UNKNOWN, confidence
+        elif confidence < 0.35:  # Low similarity - return with warning
+            return best_intent, confidence * 0.7  # Reduce confidence
+        else:
+            return best_intent, min(confidence, 0.95)  # Cap confidence at 95%
+
     def get_intent_examples(self, intent: QueryIntent) -> List[str]:
         """Get example queries for a specific intent."""
         return [
