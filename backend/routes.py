@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func, and_
 from pydantic import BaseModel, Field
+import os
 
 from database import get_db_session
 from db_models import (
@@ -47,6 +48,8 @@ class ContainerResponse(BaseModel):
     last_event_time: str
     last_action: str
     status: str
+
+
 
 # Create router
 router = APIRouter()

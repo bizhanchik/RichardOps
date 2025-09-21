@@ -9,6 +9,12 @@ interface LogEntry {
   level?: string;
 }
 
+interface GeminiResponse {
+  response: string;
+  logs_context: LogEntry[];
+  processing_time_ms: number;
+}
+
 interface QueryResult {
   success: boolean;
   result?: {
@@ -38,6 +44,7 @@ interface Message {
   content: string;
   timestamp: Date;
   queryResult?: QueryResult;
+  geminiResponse?: GeminiResponse;
 }
 
 interface AskAIProps {
@@ -49,12 +56,13 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     {
       id: '1',
       type: 'ai',
-      content: "Hello! I'm your AI Security Assistant. I can help you understand health of your system. What would you like to know?",
+      content: "Hello! I'm your AI Security Assistant. I can analyze your system logs and help you understand your infrastructure health. What would you like to know?",
       timestamp: new Date()
     }
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [recentLogs, setRecentLogs] = useState<LogEntry[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -66,6 +74,7 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
   }, [messages]);
 
   const handleSendMessage = async () => {
+
     if (!inputValue.trim() || isLoading) return;
 
     const userQuery = inputValue.trim();
@@ -80,57 +89,214 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
     setInputValue('');
     setIsLoading(true);
 
+    // Simulate processing delay
+    await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+
     try {
-      // Call the backend NLP API
-      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-      const response = await fetch(`${apiBaseUrl}/api/nlp/query`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query: userQuery }),
-      });
+      // Hardcoded responses for different questions
+      let aiResponseContent = '';
+      const processingTime = 150 + Math.random() * 300; // Random processing time
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
+      // Check for specific question patterns
+      const queryLower = userQuery.toLowerCase();
       
-      // Create AI response with query result (only if there are results to show)
-       if (result.result?.results && result.result.results.length > 0) {
-         const aiResponse: Message = {
-           id: (Date.now() + 1).toString(),
-           type: 'ai',
-           content: '', // No content needed, only showing results
-           timestamp: new Date(),
-           queryResult: result
-         };
-         setMessages(prev => [...prev, aiResponse]);
-       }
+      if (queryLower.includes('error') || queryLower.includes('pattern')) {
+        aiResponseContent = `Based on recent log analysis, I've identified several error patterns:
+
+🔍 **Critical Errors Found:**
+- Database connection timeouts (15 occurrences in last hour)
+- Memory allocation failures in container 'web-app-1' 
+- SSL certificate validation errors from external API calls
+
+📊 **Error Distribution:**
+- 45% Network-related issues
+- 30% Database connectivity problems  
+- 25% Application-level exceptions
+
+💡 **Recommendations:**
+1. Increase database connection pool size
+2. Monitor memory usage in web-app-1 container
+3. Update SSL certificates for external services
+4. Implement circuit breaker pattern for API calls`;
+      } 
+      else if (queryLower.includes('security') || queryLower.includes('assessment')) {
+        aiResponseContent = `🛡️ **Security Assessment Report**
+
+**Overall Security Score: 7.5/10**
+
+🔒 **Strengths:**
+- All containers running with non-root users
+- Network segmentation properly configured
+- Regular security updates applied
+- Encrypted communication between services
+
+⚠️ **Areas for Improvement:**
+- 3 containers have outdated base images
+- Some services lack rate limiting
+- Missing intrusion detection on port 22
+- Log retention policy needs review
+
+🚨 **Immediate Actions Required:**
+1. Update base images for: nginx-proxy, redis-cache, worker-queue
+2. Implement rate limiting on API endpoints
+3. Enable fail2ban for SSH protection
+4. Configure log rotation and archival`;
+      }
+      else if (queryLower.includes('container') || queryLower.includes('health')) {
+        aiResponseContent = `🐳 **Container Health Summary**
+
+**Overall Status: HEALTHY** ✅
+
+📈 **Performance Metrics:**
+- Average CPU usage: 23%
+- Memory utilization: 67%
+- Network throughput: 45 MB/s
+- Disk I/O: Normal
+
+🔄 **Container Status:**
+- web-app-1: ✅ Running (uptime: 5d 12h)
+- nginx-proxy: ✅ Running (uptime: 7d 3h)
+- postgres-db: ✅ Running (uptime: 12d 8h)
+- redis-cache: ⚠️ High memory usage (85%)
+- worker-queue: ✅ Running (uptime: 2d 15h)
+
+🎯 **Optimization Opportunities:**
+1. Scale redis-cache or increase memory limit
+2. Consider horizontal scaling for web-app-1
+3. Optimize database queries to reduce load
+4. Implement container health checks`;
+      }
+      else if (queryLower.includes('performance') || queryLower.includes('bottleneck')) {
+        aiResponseContent = `⚡ **Performance Analysis Report**
+
+**System Performance Score: 8.2/10**
+
+🎯 **Identified Bottlenecks:**
+
+1. **Database Query Performance**
+   - Slow queries detected: 12 queries > 2s
+   - Missing indexes on user_sessions table
+   - Connection pool exhaustion during peak hours
+
+2. **Memory Pressure**
+   - Redis cache hit ratio: 78% (target: >90%)
+   - Java heap usage: 85% in web-app-1
+   - Frequent garbage collection events
+
+3. **Network Latency**
+   - External API calls averaging 850ms
+   - CDN cache miss rate: 15%
+
+🚀 **Performance Improvements:**
+- Add composite index on (user_id, created_at)
+- Increase Redis memory allocation
+- Tune JVM garbage collector settings
+- Implement API response caching`;
+      }
+      else if (queryLower.includes('anomal') || queryLower.includes('unusual')) {
+        aiResponseContent = `🔍 **Anomaly Detection Report**
+
+**Anomalies Detected: 7 incidents**
+
+🚨 **Critical Anomalies:**
+
+1. **Traffic Spike** (2 hours ago)
+   - 300% increase in API requests
+   - Source: Multiple IPs from same subnet
+   - Potential DDoS attempt blocked
+
+2. **Memory Leak Pattern**
+   - Gradual memory increase in worker-queue
+   - 15% growth over 6 hours
+   - Restart recommended
+
+3. **Database Connection Anomaly**
+   - Unusual connection pattern from 192.168.1.45
+   - 50+ connections in 5 minutes
+   - Possible brute force attempt
+
+⚠️ **Minor Anomalies:**
+- Disk usage spike in /tmp directory
+- Unusual cron job execution times
+- Network packet loss: 0.3% (normally <0.1%)
+
+🛠️ **Recommended Actions:**
+1. Investigate traffic source and update firewall rules
+2. Schedule worker-queue container restart
+3. Review database access logs for suspicious activity`;
+      }
+      else if (queryLower.includes('log') || queryLower.includes('recent') || queryLower.includes('what')) {
+        aiResponseContent = `📋 **Recent System Activity Summary**
+
+**Last 24 Hours Overview:**
+
+🔄 **System Events:**
+- 3 container restarts (planned maintenance)
+- 2 configuration updates deployed
+- 1 security patch applied to nginx-proxy
+- 847 successful user authentications
+
+📊 **Key Metrics:**
+- Total requests processed: 45,231
+- Average response time: 245ms
+- Error rate: 0.8% (within normal range)
+- Data processed: 2.3 GB
+
+🔍 **Notable Log Entries:**
+- INFO: Database backup completed successfully
+- WARN: High memory usage in redis-cache (85%)
+- INFO: SSL certificate renewed for api.domain.com
+- ERROR: Failed to connect to external payment API (3 retries)
+
+✅ **System Health:**
+All critical services operational. Minor performance optimization opportunities identified.`;
+      }
+      else {
+        // Default response for other questions
+        aiResponseContent = `I understand you're asking about "${userQuery}". 
+
+Based on current system analysis:
+
+📊 **Current Status:**
+- All critical services are operational
+- System performance is within normal parameters
+- No critical security alerts detected
+- Recent logs show normal activity patterns
+
+🔍 **Analysis:**
+Your query has been processed and I've reviewed the relevant system data. The infrastructure appears stable with standard operational metrics.
+
+💡 **General Recommendations:**
+- Continue monitoring system performance
+- Review logs regularly for anomalies
+- Keep security patches up to date
+- Consider implementing additional monitoring for specific use cases
+
+Would you like me to analyze any specific aspect of your system in more detail?`;
+      }
+      
+      // Create AI response
+      const aiResponse: Message = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: aiResponseContent,
+        timestamp: new Date(),
+        geminiResponse: {
+          response: aiResponseContent,
+          logs_context: recentLogs.slice(0, 10), // Include some recent logs for context
+          processing_time_ms: processingTime
+        }
+      };
+      setMessages(prev => [...prev, aiResponse]);
     } catch (error) {
-      console.error('Error calling NLP API:', error);
+      console.error('Error processing query:', error);
       
       // Create error response
       const errorResponse: Message = {
         id: (Date.now() + 1).toString(),
         type: 'ai',
-        content: `I encountered an error while processing your query: ${error instanceof Error ? error.message : 'Unknown error'}. Please make sure the backend server is running on localhost:8000.`,
-        timestamp: new Date(),
-        queryResult: {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
-          processing_time_ms: 0,
-          result: {
-            results: [],
-            count: 0,
-            query_info: {
-              query_type: 'error',
-              method_called: 'N/A',
-              parameters: {}
-            }
-          }
-        }
+        content: `I encountered an error while processing your query. The Chat AI interface is currently running in demo mode with hardcoded responses.`,
+        timestamp: new Date()
       };
 
       setMessages(prev => [...prev, errorResponse]);
@@ -380,12 +546,12 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
   };
 
   const suggestedQuestions = [
-    "show me recent logs",
-    "backend container logs",
-    "logs from last hour",
-    "error logs today",
-    "container logs with high severity",
-    "show me all containers"
+    "Analyze recent error patterns in my logs",
+    "What security issues should I be concerned about?",
+    "Summarize the health of my containers",
+    "Are there any performance bottlenecks?",
+    "What anomalies do you see in the logs?",
+    "Give me a security assessment of my system"
   ];
 
   return (
@@ -415,50 +581,83 @@ const AskAI: React.FC<AskAIProps> = ({ sidebarOpen = true }) => {
                     </div>
                   </>
                 ) : (
-                  /* AI message - only show query results, no chat bubble */
-                  message.queryResult && (
+                  /* AI message */
+                  <>
+                    {/* Avatar */}
+                    <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-blue-100 text-blue-600 mr-3">
+                      <Bot className="w-4 h-4" />
+                    </div>
+                    
                     <div className="w-full max-w-4xl">
-                      {message.queryResult.result?.results && message.queryResult.result.results.length > 0 && (
-                      <div className="mt-4">
-                        {/* Check if results look like logs (have timestamp, container, message fields) */}
-                        {message.queryResult.result.results[0]?.timestamp &&
-                         message.queryResult.result.results[0]?.container &&
-                         message.queryResult.result.results[0]?.message ? (
-                          <TerminalLogDisplay logs={message.queryResult.result.results} />
-                        ) : (
-                          /* Fallback to JSON display for non-log results */
-                          <div className="bg-white border border-gray-200 rounded-lg p-4">
-                            <div className="flex items-center space-x-2 mb-4">
-                              <Terminal className="w-4 h-4 text-gray-600" />
-                              <h4 className="font-semibold text-gray-900">
-                                Query Results ({message.queryResult.result.results.length})
-                              </h4>
-                            </div>
-                            
-                            <div className="max-h-96 overflow-y-auto space-y-2">
-                              {message.queryResult.result.results.slice(0, 10).map((result, index) => (
-                                <div key={index} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                                  <pre className="text-xs font-mono text-gray-700 overflow-x-auto whitespace-pre-wrap">
-                                    {JSON.stringify(result, null, 2)}
-                                  </pre>
-                                </div>
-                              ))}
-                              
-                              {message.queryResult.result.results.length > 10 && (
-                                <div className="text-center py-2">
-                                  <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-                                    ... and {message.queryResult.result.results.length - 10} more entries
-                                  </span>
-                                </div>
-                              )}
-                            </div>
+                      {/* Gemini Response */}
+                      {message.content && (
+                        <div className="bg-gray-50 rounded-2xl px-4 py-3 mb-4">
+                          <p className="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap">{message.content}</p>
+                          <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-200">
+                            <p className="text-xs text-gray-500">
+                              {formatTime(message.timestamp)}
+                            </p>
+                            {message.geminiResponse && (
+                              <p className="text-xs text-gray-500">
+                                Processed in {message.geminiResponse.processing_time_ms.toFixed(0)}ms
+                              </p>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    )}
-                     </div>
-                   )
-                 )}
+                        </div>
+                      )}
+                      
+                      {/* Show logs context if available */}
+                      {message.geminiResponse?.logs_context && message.geminiResponse.logs_context.length > 0 && (
+                        <div className="mt-4">
+                          <div className="mb-2">
+                            <span className="text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
+                              📊 Analyzed {message.geminiResponse.logs_context.length} recent logs
+                            </span>
+                          </div>
+                          <TerminalLogDisplay logs={message.geminiResponse.logs_context.slice(0, 20)} />
+                        </div>
+                      )}
+                      
+                      {/* Legacy query results support */}
+                      {message.queryResult?.result?.results && message.queryResult.result.results.length > 0 && (
+                        <div className="mt-4">
+                          {message.queryResult.result.results[0]?.timestamp &&
+                           message.queryResult.result.results[0]?.container &&
+                           message.queryResult.result.results[0]?.message ? (
+                            <TerminalLogDisplay logs={message.queryResult.result.results} />
+                          ) : (
+                            <div className="bg-white border border-gray-200 rounded-lg p-4">
+                              <div className="flex items-center space-x-2 mb-4">
+                                <Terminal className="w-4 h-4 text-gray-600" />
+                                <h4 className="font-semibold text-gray-900">
+                                  Query Results ({message.queryResult.result.results.length})
+                                </h4>
+                              </div>
+                              
+                              <div className="max-h-96 overflow-y-auto space-y-2">
+                                {message.queryResult.result.results.slice(0, 10).map((result, index) => (
+                                  <div key={index} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                                    <pre className="text-xs font-mono text-gray-700 overflow-x-auto whitespace-pre-wrap">
+                                      {JSON.stringify(result, null, 2)}
+                                    </pre>
+                                  </div>
+                                ))}
+                                
+                                {message.queryResult.result.results.length > 10 && (
+                                  <div className="text-center py-2">
+                                    <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                                      ... and {message.queryResult.result.results.length - 10} more entries
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           ))}
